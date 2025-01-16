@@ -492,9 +492,9 @@ func get_temp_directory() string {
 }
 
 func delete_temp_files(file1, file2, file3 string) {
-	execute_system_command(SYSTEM_COMMAND_DEL, file1, "")
-	execute_system_command(SYSTEM_COMMAND_DEL, file2, "")
-	execute_system_command(SYSTEM_COMMAND_DEL, file3, "")
+	execute_system_command(SYSTEM_COMMAND_DEL, file1)
+	execute_system_command(SYSTEM_COMMAND_DEL, file2)
+	execute_system_command(SYSTEM_COMMAND_DEL, file3)
 }
 
 // Sends specified file to client, return '1' if not have error.
@@ -526,13 +526,13 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 			fmt.Printf("<<<DEBUG INFO>>>: %v %v\n", tmp_dir_files, current_directory)
 		}
 
-		execute_system_command(tmp_dir_files, current_directory, "")
+		execute_system_command(tmp_dir_files, current_directory)
 
 		if is_debug() {
 			fmt.Printf("<<<DEBUG INFO>>>: %v %v\n", tmp_dir_directory, current_directory)
 		}
 
-		execute_system_command(tmp_dir_directory, current_directory, "")
+		execute_system_command(tmp_dir_directory, current_directory)
 
 		f_dir, err := os.Create(tmp)
 		if err != nil {
@@ -559,7 +559,7 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 			if err == io.EOF {
 				break
 			}
-			if n != 1 && err != nil {
+			if n != 1 || err != nil {
 				fmt.Println(err)
 				break
 			}
@@ -614,7 +614,7 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 			if err == io.EOF {
 				break
 			}
-			if n != 1 && err != nil {
+			if n != 1 || err != nil {
 				fmt.Println(err)
 				break
 			}
@@ -930,7 +930,7 @@ func command_delete(s TcpStream, receive_buffer []byte) bool {
 
 	replace_backslash(&tmp)
 
-	execute_system_command(SYSTEM_COMMAND_DEL, tmp, "")
+	execute_system_command(SYSTEM_COMMAND_DEL, tmp)
 
 	if is_debug() {
 		fmt.Printf("<<<DEBUG INFO>>>: %s %s\n", SYSTEM_COMMAND_DEL, tmp)
@@ -947,7 +947,7 @@ func command_make_directory(s TcpStream, receive_buffer []byte) bool {
 
 	replace_backslash(&tmp)
 
-	execute_system_command(SYSTEM_COMMAND_MKDIR, tmp, "")
+	execute_system_command(SYSTEM_COMMAND_MKDIR, tmp)
 
 	if is_debug() {
 		fmt.Printf("<<<DEBUG INFO>>>: %s %s\n", SYSTEM_COMMAND_MKDIR, tmp)
@@ -966,7 +966,7 @@ func command_delete_directory(s TcpStream, receive_buffer []byte) bool {
 
 	replace_backslash(&tmp)
 
-	execute_system_command(SYSTEM_COMMAND_RMDIR, tmp, "")
+	execute_system_command(SYSTEM_COMMAND_RMDIR, tmp)
 
 	if is_debug() {
 		fmt.Printf("<<<DEBUG INFO>>>: %s %s\n", SYSTEM_COMMAND_RMDIR, tmp)
