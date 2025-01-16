@@ -18,6 +18,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -57,9 +58,9 @@ func main() {
 	var env_temp = get_temp_directory()
 
 	if len(env_temp) == 0 {
-		panic("Error, not find environment <TEMP>!!")
+		log.Fatalln("Error, not find environment <TEMP>!!")
 	} else if len(env_temp) > 50 {
-		panic("Error, very long size for environment <TEMP>!!")
+		log.Fatalln("Error, very long size for environment <TEMP>!!")
 	}
 
 	var port = get_server_address_info()
@@ -67,7 +68,7 @@ func main() {
 	listener, err := net.Listen("tcp4", port)
 
 	if err != nil {
-		panic(err)
+		log.Fatalln(err)
 	}
 
 	defer listener.Close()
@@ -78,9 +79,8 @@ func main() {
 		conn, err := listener.Accept()
 
 		if err != nil {
-			fmt.Println(err)
+			log.Fatalln(err)
 			conn.Close()
-			continue
 		}
 
 		go handle_clients(conn)
@@ -126,9 +126,9 @@ func convert_cyrillic() bool {
 }
 
 func show_server_info() {
-	fmt.Println("===============================")
-	fmt.Println("     159.334 FTP Server        ")
-	fmt.Println("===============================")
+	log.Println("===============================")
+	log.Println("     159.334 FTP Server        ")
+	log.Println("===============================")
 }
 
 // Gets the servers address information based on arguments.
@@ -175,7 +175,7 @@ func get_client_port(s TcpStream) int {
 	tmp := strings.Split(s.RemoteAddr().String(), ":")[1]
 	value, err := strconv.ParseInt(tmp, 10, 64)
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		return 0
 	}
 	return int(value)
@@ -183,11 +183,11 @@ func get_client_port(s TcpStream) int {
 
 // Takes incoming connection and assigns new socket.
 func show_client_info(s TcpStream) {
-	fmt.Println("A client has been accepted.")
+	log.Println("A client has been accepted.")
 
 	addr := strings.Split(s.RemoteAddr().String(), ":")
 
-	fmt.Printf("Connected to client with IP address: %s, at Port: %s\n", addr[0], addr[1])
+	log.Printf("Connected to client with IP address: %s, at Port: %s\n", addr[0], addr[1])
 }
 
 // Receive and handle messages from client, returns false if client ends connection.
@@ -281,7 +281,7 @@ func receive_message(s TcpStream, receive_buffer *[]byte) bool {
 		bytes, err = s.Read(buffer)
 
 		if err != nil {
-			fmt.Println("Read error:", err)
+			log.Println("Read error:", err)
 			bytes = 0
 			break
 		}
@@ -304,7 +304,7 @@ func receive_message(s TcpStream, receive_buffer *[]byte) bool {
 	}
 
 	if is_debug() {
-		fmt.Printf("<--- %s\n", string(*receive_buffer))
+		log.Printf("<--- %s\n", string(*receive_buffer))
 	}
 
 	return true
@@ -314,16 +314,16 @@ func receive_message(s TcpStream, receive_buffer *[]byte) bool {
 func command_user_name(s TcpStream, receive_buffer []byte, user_name string, authroised_login *bool) bool {
 	remove_command(receive_buffer, &user_name, 4)
 
-	fmt.Printf("User: \"%s\" attempting to login.\n", user_name)
+	log.Printf("User: \"%s\" attempting to login.\n", user_name)
 
 	*authroised_login = is_valid_user_name(user_name)
 
 	if *authroised_login {
-		fmt.Println("User name valid. Password required.")
+		log.Println("User name valid. Password required.")
 
 		return send_message(s, "331 Authorised login requested, please specify the password.\r\n")
 	} else {
-		fmt.Println("User name unauthorised. Public access only.")
+		log.Println("User name unauthorised. Public access only.")
 
 		return send_message(s, "331 Public login requested, please specify email as password.\r\n")
 	}
@@ -334,11 +334,11 @@ func send_message(s TcpStream, send_buffer string) bool {
 	var bytes = len(send_buffer)
 	n, err := s.Write([]byte(send_buffer))
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		return false
 	}
 	if is_debug() {
-		fmt.Printf("---> %s", send_buffer)
+		log.Printf("---> %s", send_buffer)
 	}
 	return bytes == n
 }
@@ -357,11 +357,11 @@ func command_password(s TcpStream, receive_buffer []byte, password string, authr
 	var send_buffer string
 
 	if valid_password {
-		fmt.Println("Password valid. User logged in.")
+		log.Println("Password valid. User logged in.")
 
 		send_buffer = "230 Login successful.\r\n"
 	} else {
-		fmt.Println("Password invalid. Login failed.")
+		log.Println("Password invalid. Login failed.")
 
 		send_buffer = "530 Login authentication failed.\r\n"
 	}
@@ -384,22 +384,22 @@ func is_valid_password(password string, authroised_login *bool) bool {
 
 // Client sent SYST command, returns false if fails.
 func command_system_information(s TcpStream) bool {
-	fmt.Println("System information requested.")
+	log.Println("System information requested.")
 
 	return send_message(s, "215 Windows Type: WIN64\r\n")
 }
 
 // Client sent QUIT command, returns false if fails.
 func command_quit() bool {
-	fmt.Println("Client has quit the session.")
+	log.Println("Client has quit the session.")
 
 	return false
 }
 
 // Client sent PORT command, returns false if fails.
 func command_port(s TcpStream, connect_to *string, receive_buffer []byte) bool {
-	fmt.Println("===================================================")
-	fmt.Println("\tActive FTP mode, the client is listening...")
+	log.Println("===================================================")
+	log.Println("\tActive FTP mode, the client is listening...")
 
 	*connect_to = get_client_ip_and_port(receive_buffer)
 
@@ -427,24 +427,24 @@ func get_client_ip_and_port(receive_buffer []byte) string {
 
 	value, err = strconv.ParseInt(parts[4], 10, 64)
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		return ""
 	}
 	active_port[0] = int(value)
 
 	value, err = strconv.ParseInt(parts[5], 10, 64)
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		return ""
 	}
 	active_port[1] = int(value)
 
 	var ip_buffer = fmt.Sprintf("%s.%s.%s.%s", active_ip[0], active_ip[1], active_ip[2], active_ip[3])
-	fmt.Printf("\tClient's IP is %s\n", ip_buffer)
+	log.Printf("\tClient's IP is %s\n", ip_buffer)
 
 	var port_decimal int = active_port[0]<<8 | active_port[1]
 	var port_buffer = strconv.Itoa(port_decimal)
-	fmt.Printf("\tClient's Port is %s\n", port_buffer)
+	log.Printf("\tClient's Port is %s\n", port_buffer)
 
 	return ip_buffer + ":" + port_buffer
 }
@@ -492,7 +492,7 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 	var tmp_dir_files = "dir /A:-D /-C"
 
 	if client_id > 0 {
-		fmt.Println("Client has requested the directory listing.")
+		log.Println("Client has requested the directory listing.")
 
 		year := int64(time.Now().Year())
 
@@ -514,13 +514,13 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 
 		f_dir, err := os.Create(tmp)
 		if err != nil {
-			fmt.Println(err)
+			log.Panicln(err)
 			return 0
 		}
 
 		f_directory, err := os.Open(tmp_directory)
 		if err != nil {
-			fmt.Println(err)
+			log.Panicln(err)
 			f_dir.Close()
 			f_directory.Close()
 			return 0
@@ -538,7 +538,7 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 				break
 			}
 			if n != 1 || err != nil {
-				fmt.Println(err)
+				log.Println(err)
 				break
 			}
 			var b byte = buffer_for_read[0]
@@ -562,7 +562,7 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 				}
 				f_dir.Write([]byte(tmp_buffer_dir))
 				if is_debug() {
-					fmt.Println(tmp_buffer_dir)
+					log.Println(tmp_buffer_dir)
 				}
 				buffer = buffer[:0]
 			} else {
@@ -577,7 +577,7 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 		var f_files *os.File
 		f_files, err = os.Open(tmp_file)
 		if err != nil {
-			fmt.Println(err)
+			log.Panicln(err)
 			f_dir.Close()
 			f_files.Close()
 			return 0
@@ -593,7 +593,7 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 				break
 			}
 			if n != 1 || err != nil {
-				fmt.Println(err)
+				log.Println(err)
 				break
 			}
 			var b byte = buffer_for_read[0]
@@ -655,7 +655,7 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 					}
 					f_dir.Write([]byte(tmp_buffer_file))
 					if is_debug() {
-						fmt.Println(tmp_buffer_file)
+						log.Println(tmp_buffer_file)
 					}
 				}
 				buffer = buffer[:0]
@@ -669,7 +669,7 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 		f_files.Close()
 		f_dir.Close()
 	} else {
-		fmt.Printf("Client has requested to retrieve the file: \"%s\".\n", file_name)
+		log.Printf("Client has requested to retrieve the file: \"%s\".\n", file_name)
 	}
 
 	var file_name_for_open string
@@ -689,7 +689,7 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 	var f_in, err = os.OpenFile(file_name_for_open, os.O_RDONLY, 0666)
 	defer f_in.Close()
 	if err != nil {
-		fmt.Println("Error:", err)
+		log.Println("Error:", err)
 
 		if !send_message(s, "550 File name invalid.\r\n") {
 			return 0
@@ -711,7 +711,7 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 	send_to, err := net.Dial("tcp", connect_to)
 	defer send_to.Close()
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		if client_id > 0 {
 			if !is_debug() {
 				delete_temp_files(tmp, tmp_directory, tmp_file)
@@ -731,7 +731,7 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 		var read_bytes int
 
 		if err != nil {
-			fmt.Println(err)
+			log.Println(err)
 			return 0
 		}
 
@@ -744,7 +744,7 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 		var bytes int
 		bytes, err = send_to.Write(temp_buffer[:read_bytes])
 		if err != nil {
-			fmt.Println(err)
+			log.Println(err)
 			return 0
 		}
 
@@ -764,7 +764,7 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 		}
 	}
 
-	fmt.Println("File sent successfully.")
+	log.Println("File sent successfully.")
 
 	return 1
 }
@@ -772,7 +772,7 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 // return '0' if not have error.
 func execute_system_command(args ...string) int {
 	if is_debug() {
-		fmt.Printf("Execute command: %s\n", args)
+		log.Printf("Execute command: %s\n", args)
 	}
 
 	var cmd_args []string = make([]string, 1)
@@ -781,7 +781,7 @@ func execute_system_command(args ...string) int {
 		cmd_args = append(cmd_args, arg)
 	}
 	if err := exec.Command("cmd", cmd_args...).Run(); err != nil {
-		fmt.Println("Error:", err)
+		log.Println("Error:", err)
 	}
 
 	return 0
@@ -819,12 +819,12 @@ func command_store(s TcpStream, connect_to string, receive_buffer []byte, curren
 
 // Sends specified file to client.
 func save_file(s TcpStream, connect_to, file_name, current_directory string) bool {
-	fmt.Printf("Client has requested to store the file: \"%s\".\n", file_name)
+	log.Printf("Client has requested to store the file: \"%s\".\n", file_name)
 
 	recv_from, err := net.Dial("tcp", connect_to)
 	defer recv_from.Close()
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		send_failed_active_connection(s)
 		return false
 	}
@@ -845,7 +845,7 @@ func save_file(s TcpStream, connect_to, file_name, current_directory string) boo
 	f_out_file, err = os.Create(file_name_full)
 	defer f_out_file.Close()
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		return false
 	}
 
@@ -857,19 +857,19 @@ func save_file(s TcpStream, connect_to, file_name, current_directory string) boo
 			break
 		}
 		if err != nil {
-			fmt.Println(err)
+			log.Println(err)
 			return false
 		}
 
 		if recv_bytes > 0 {
 			if n, err := f_out_file.Write(temp_buffer[:recv_bytes]); n == 0 || err != nil {
-				fmt.Println(err)
+				log.Println(err)
 				return false
 			}
 		}
 	}
 
-	fmt.Println("File saved successfully.")
+	log.Println("File saved successfully.")
 
 	return true
 }
@@ -1086,7 +1086,7 @@ func close_client_connection(s TcpStream) {
 
 	s.Close()
 
-	fmt.Println("Disconnected from client.")
+	log.Println("Disconnected from client.")
 }
 
 // Replace '/' to '\' for Windows
@@ -1248,9 +1248,9 @@ func simple_conv(in_string []byte, out_string *[]byte, tuda_suda bool) {
 
 	if is_debug() {
 		for _, x := range []byte(in_string) {
-			fmt.Printf("0x%02x, ", x)
+			log.Printf("0x%02x, ", x)
 		}
-		fmt.Println("")
+		log.Println("")
 	}
 
 	var i int
@@ -1346,8 +1346,8 @@ func simple_conv(in_string []byte, out_string *[]byte, tuda_suda bool) {
 
 	if is_debug() {
 		for _, x := range []byte(in_string) {
-			fmt.Printf("0x%02x, ", x)
+			log.Printf("0x%02x, ", x)
 		}
-		fmt.Println("")
+		log.Println("")
 	}
 }
