@@ -39,7 +39,7 @@ const SYSTEM_COMMAND_RENAME = "rename"
 var SHOW_DEBUG_MESSAGE bool
 var CONVERT_CYRILLIC bool
 
-const DEFAULT_PORT = "21"
+const DEFAULT_PORT = 21
 const BIG_BUFFER_SIZE uint = 65535
 
 type TcpStream = net.Conn
@@ -137,7 +137,7 @@ func get_server_address_info() string {
 	if len(os.Args) > 1 {
 		result = fmt.Sprintf(":%s", os.Args[1])
 	} else {
-		result = fmt.Sprintf(":%s", DEFAULT_PORT)
+		result = fmt.Sprintf(":%d", DEFAULT_PORT)
 	}
 	return result
 }
@@ -152,7 +152,7 @@ func handle_clients(s TcpStream) {
 	}
 
 	var success = true
-	var authroised_login = false
+	var authroised_login bool
 	var connect_to string
 	var client_id int = get_client_port(s)
 	var current_directory string
@@ -196,14 +196,14 @@ func communicate_with_client(s TcpStream, connect_to *string, authroised_login *
 	var user_name string
 	var password string
 
-	var receipt_successful = receive_message(s, &receive_buffer)
+	receipt_successful := receive_message(s, &receive_buffer)
 	if !receipt_successful {
 		return receipt_successful
 	}
 
 	var success bool
 
-	var maybe_command string = string(receive_buffer[:4])
+	maybe_command := string(receive_buffer[:4])
 
 	switch maybe_command {
 	case "USER":
@@ -272,13 +272,13 @@ func communicate_with_client(s TcpStream, connect_to *string, authroised_login *
 // Receives message and saves it in receive buffer, returns false if connection ended.
 func receive_message(s TcpStream, receive_buffer *[]byte) bool {
 	var recv_bytes int
-	var buffer = make([]byte, 1)
+	var buffer_for_read = make([]byte, 1)
 	var err error
 
 	*receive_buffer = make([]byte, 0)
 
 	for {
-		if recv_bytes, err = s.Read(buffer); err == io.EOF {
+		if recv_bytes, err = s.Read(buffer_for_read); err == io.EOF {
 			break
 		}
 
@@ -288,13 +288,13 @@ func receive_message(s TcpStream, receive_buffer *[]byte) bool {
 			break
 		}
 
-		if buffer[0] == '\n' {
+		if buffer_for_read[0] == '\n' {
 			break
-		} else if buffer[0] == '\r' {
+		} else if buffer_for_read[0] == '\r' {
 			continue
 		}
 
-		*receive_buffer = append(*receive_buffer, buffer[:1]...)
+		*receive_buffer = append(*receive_buffer, buffer_for_read[:1]...)
 	}
 
 	if recv_bytes == 0 {
@@ -329,8 +329,8 @@ func command_user_name(s TcpStream, receive_buffer []byte, user_name string, aut
 
 // Send message to client, returns true if message was sended.
 func send_message(s TcpStream, send_buffer string) bool {
-	var bytes = len(send_buffer)
-	n, err := s.Write([]byte(send_buffer))
+	bytes_for_send := len(send_buffer)
+	send_bytes, err := s.Write([]byte(send_buffer))
 	if err != nil {
 		log.Println(err)
 		return false
@@ -338,7 +338,7 @@ func send_message(s TcpStream, send_buffer string) bool {
 	if is_debug() {
 		log.Printf("---> %s", send_buffer)
 	}
-	return bytes == n
+	return bytes_for_send == send_bytes
 }
 
 // Returns true if valid user name.
@@ -350,7 +350,7 @@ func is_valid_user_name(user_name string) bool {
 func command_password(s TcpStream, receive_buffer []byte, password string, authroised_login *bool) bool {
 	remove_command(receive_buffer, &password, 4)
 
-	var valid_password = is_valid_password(password, authroised_login)
+	valid_password := is_valid_password(password, authroised_login)
 
 	var send_buffer string
 
@@ -458,13 +458,9 @@ func send_failed_active_connection(s TcpStream) bool {
 
 // Client sent LIST command, returns false if fails.
 func command_list(s TcpStream, connect_to string, client_id int, current_directory string) bool {
-	var path_temp = get_temp_directory()
+	var tmp = fmt.Sprintf("%s\\%d_tmp_dir.txt", get_temp_directory(), client_id)
 
-	var tmp = fmt.Sprintf("%s\\%d_tmp_dir.txt", path_temp, client_id)
-
-	var result = send_file(s, connect_to, tmp, client_id, current_directory)
-
-	if result != 1 {
+	if send_file(s, connect_to, tmp, client_id, current_directory) != 1 {
 		return false
 	}
 
@@ -703,7 +699,7 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 		}
 	}
 
-	send_to, err := net.Dial("tcp", connect_to)
+	send_to, err := net.Dial("tcp4", connect_to)
 	defer send_to.Close()
 	if err != nil {
 		log.Println(err)
@@ -807,7 +803,7 @@ func command_store(s TcpStream, connect_to string, receive_buffer []byte, curren
 func save_file(s TcpStream, connect_to, file_name, current_directory string) bool {
 	log.Printf("Client has requested to store the file: \"%s\".\n", file_name)
 
-	recv_from, err := net.Dial("tcp", connect_to)
+	recv_from, err := net.Dial("tcp4", connect_to)
 	defer recv_from.Close()
 	if err != nil {
 		log.Println(err)
@@ -901,9 +897,7 @@ func command_make_directory(s TcpStream, receive_buffer []byte) bool {
 
 	execute_system_command(SYSTEM_COMMAND_MKDIR, tmp)
 
-	var send_buffer = fmt.Sprintf("257 '/%s' directory created\r\n", tmp)
-
-	return send_message(s, send_buffer)
+	return send_message(s, fmt.Sprintf("257 '/%s' directory created\r\n", tmp))
 }
 
 // Client sent RMD command, returns false if connection ended.
@@ -925,9 +919,7 @@ func command_type(s TcpStream, receive_buffer []byte) bool {
 
 	remove_command(receive_buffer, &type_name, 4)
 
-	var send_buffer = fmt.Sprintf("200 Type set to %s.\r\n", type_name)
-
-	return send_message(s, send_buffer)
+	return send_message(s, fmt.Sprintf("200 Type set to %s.\r\n", type_name))
 }
 
 // Client sent FEAT command, returns false if fails.
@@ -1018,9 +1010,7 @@ func command_mfmt(s TcpStream, receive_buffer []byte) bool {
 		return send_argument_syntax_error(s)
 	}
 
-	var send_buffer = fmt.Sprintf("213 Modify=%s; %s\r\n", date_time_mfmt, file_name)
-
-	return send_message(s, send_buffer)
+	return send_message(s, fmt.Sprintf("213 Modify=%s; %s\r\n", date_time_mfmt, file_name))
 }
 
 // Client sent unknown command, returns false if fails.
