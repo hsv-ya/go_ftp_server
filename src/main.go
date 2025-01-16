@@ -1229,14 +1229,6 @@ func simple_conv(in_string []byte, out_string *[]byte, tuda_suda bool) {
 		{0xe2, 0x84, 0x96, 0xfc}} // N
 
 	var in_len = len(in_string)
-
-	if is_debug() {
-		for _, x := range []byte(in_string) {
-			log.Printf("0x%02x, ", x)
-		}
-		log.Println("")
-	}
-
 	var i int
 	var b byte
 
@@ -1329,9 +1321,18 @@ func simple_conv(in_string []byte, out_string *[]byte, tuda_suda bool) {
 	}
 
 	if is_debug() {
-		for _, x := range []byte(in_string) {
-			log.Printf("0x%02x, ", x)
+		if len(in_string) != len(*out_string) {
+			var tmp []string
+			for _, x := range []byte(in_string) {
+				tmp = append(tmp, fmt.Sprintf("0x%02x, ", x))
+			}
+			log.Println(tmp)
+
+			var tmp2 []string
+			for _, x := range []byte(*out_string) {
+				tmp2 = append(tmp2, fmt.Sprintf("0x%02x, ", x))
+			}
+			log.Println(tmp2)
 		}
-		log.Println("")
 	}
 }
