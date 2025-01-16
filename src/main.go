@@ -994,26 +994,33 @@ func command_rename_to(s TcpStream, receive_buffer []byte, name_file_or_dir_for_
 
 // Client sent MFMT command, returns false if connection ended.
 func command_mfmt(s TcpStream, receive_buffer []byte) bool {
-	/*    var mdya string
+	var mdya string
 
-	      remove_command(receive_buffer, &mdya, 4)
+	remove_command(receive_buffer, &mdya, 4)
 
-	      var v []string = strings.Split(mdya, " ")
+	var v []string = strings.Split(mdya, " ")
 
-	      var date_time_mfmt = v[0]
+	var date_time_mfmt = v[0]
 
-	      //var date_time_for_file = NaiveDateTime::parse_from_str(date_time_mfmt, "%Y%m%d%H%M%S").unwrap();
+	year, _ := strconv.Atoi(string(date_time_mfmt[0:4]))
+	month, _ := strconv.Atoi(string(date_time_mfmt[4:6]))
+	day, _ := strconv.Atoi(string(date_time_mfmt[6:8]))
+	hour, _ := strconv.Atoi(string(date_time_mfmt[8:10]))
+	minute, _ := strconv.Atoi(string(date_time_mfmt[10:12]))
+	seconds, _ := strconv.Atoi(string(date_time_mfmt[12:14]))
+	mtime := time.Date(year, time.Month(month), day, hour, minute, seconds, 0, time.UTC)
+	atime := mtime
 
-	      var file_name = string(receive_buffer[19:])
+	var file_name = string(receive_buffer[21:])
 
-	      //var mtime = FileTime::from_unix_time(date_time_for_file.and_utc().timestamp(), 0);
+	if err := os.Chtimes(file_name, atime, mtime); err != nil {
+		log.Println(file_name, err)
+		return send_argument_syntax_error(s)
+	}
 
-	      var _ = set_file_mtime(file_name.clone(), mtime)
+	var send_buffer = fmt.Sprintf("213 Modify=%s; %s\r\n", date_time_mfmt, file_name)
 
-	      var send_buffer = fmt.Sprintf("213 Modify=%s; %s\r\n", date_time_mfmt, file_name)
-
-	      return send_message(s, send_buffer)*/
-	return true
+	return send_message(s, send_buffer)
 }
 
 // Client sent unknown command, returns false if fails.
