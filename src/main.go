@@ -314,8 +314,6 @@ func receive_message(s TcpStream, receive_buffer *[]byte) bool {
 func command_user_name(s TcpStream, receive_buffer []byte, user_name string, authroised_login *bool) bool {
 	remove_command(receive_buffer, &user_name, 4)
 
-	//var user_name = String::from_utf8_lossy(&user_name);
-
 	fmt.Printf("User: \"%s\" attempting to login.\n", user_name)
 
 	*authroised_login = is_valid_user_name(user_name)
@@ -849,13 +847,6 @@ func save_file(s TcpStream, connect_to, file_name, current_directory string) boo
 		send_failed_active_connection(s)
 		return false
 	}
-	/*match TcpStream::connect(connect_to) {
-	    Ok(stream) => recv_from = stream,
-	    Err(_) => {
-	        send_failed_active_connection(s);
-	        return false;
-	    }
-	}*/
 
 	if !send_message(s, "150 Data connection ready.\r\n") {
 		return false
@@ -871,11 +862,6 @@ func save_file(s TcpStream, connect_to, file_name, current_directory string) boo
 
 	var f_out_file *os.File
 	f_out_file, err = os.Create(file_name_full)
-	/*var f_out_file;
-	  match result {
-	      Ok(f) => f_out_file = f,
-	      Err(_) => return false
-	  }*/
 	if err != nil {
 		fmt.Println(err)
 		return false
@@ -1079,14 +1065,6 @@ func command_unknown(s TcpStream) bool {
 
 // Takes a string with a 4 letter command at beginning and saves an output string with this removed.
 func remove_command(input_string []byte, output_string *string, skip_characters uint) {
-	/*var i uint
-	  var length uint = len(input_string)
-
-	  for (i + skip_characters + 1) < length {
-	      output_string.push(input_string[i+skip_characters+1])
-	      i += 1
-	  }
-	*/
 	*output_string = string(input_string[(skip_characters + 1):])
 }
 
