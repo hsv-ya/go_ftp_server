@@ -669,7 +669,7 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 		f_files.Close()
 		f_dir.Close()
 	} else {
-		fmt.Printf("Client has requested to retrieve the file: \"%s\".", file_name)
+		fmt.Printf("Client has requested to retrieve the file: \"%s\".\n", file_name)
 	}
 
 	var file_name_for_open string
