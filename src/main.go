@@ -842,6 +842,7 @@ func save_file(s TcpStream, connect_to, file_name, current_directory string) boo
 	fmt.Printf("Client has requested to store the file: \"%s\".\n", file_name)
 
 	recv_from, err := net.Dial("tcp", connect_to)
+	defer recv_from.Close()
 	if err != nil {
 		fmt.Println(err)
 		send_failed_active_connection(s)
@@ -862,27 +863,29 @@ func save_file(s TcpStream, connect_to, file_name, current_directory string) boo
 
 	var f_out_file *os.File
 	f_out_file, err = os.Create(file_name_full)
+	defer f_out_file.Close()
 	if err != nil {
 		fmt.Println(err)
 		return false
 	}
 
-	var temp_buffer []byte // = vec![0; BIG_BUFFER_SIZE];
+	var temp_buffer []byte = make([]byte, BIG_BUFFER_SIZE)
 
 	for {
 		var recv_bytes, err = recv_from.Read(temp_buffer)
+		if err == io.EOF {
+			break
+		}
 		if err != nil {
 			fmt.Println(err)
 			return false
 		}
 
 		if recv_bytes > 0 {
-			if n, err := f_out_file.Write(temp_buffer); n == 0 || err != nil {
+			if n, err := f_out_file.Write(temp_buffer[:recv_bytes]); n == 0 || err != nil {
 				fmt.Println(err)
 				return false
 			}
-		} else {
-			break
 		}
 	}
 
