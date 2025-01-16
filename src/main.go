@@ -544,6 +544,7 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 		if err != nil {
 			fmt.Println(err)
 			f_dir.Close()
+			f_directory.Close()
 			return 0
 		}
 
@@ -599,6 +600,8 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 		f_files, err = os.Open(tmp_file)
 		if err != nil {
 			fmt.Println(err)
+			f_dir.Close()
+			f_files.Close()
 			return 0
 		}
 
@@ -628,7 +631,12 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 				if is_numerical(buffer[0]) {
 					var line = string(buffer[0:36])
 
-					var v []string = strings.Split(line, " ")
+					var line_for_split string = line
+					for strings.Contains(line_for_split, "  ") {
+						line_for_split = strings.ReplaceAll(line_for_split, "  ", " ")
+					}
+
+					var v []string = strings.Split(line_for_split, " ")
 					var tmp_date = []byte(v[0])
 
 					var i_day, i_month, i_year int64
@@ -679,6 +687,9 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 		}
 
 		f_dir.Write([]byte("\n"))
+
+		f_files.Close()
+		f_dir.Close()
 	} else {
 		fmt.Printf("Client has requested to retrieve the file: \"%s\".", file_name)
 	}
@@ -698,33 +709,29 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 	}
 
 	var f_in, err = os.OpenFile(file_name_for_open, os.O_RDONLY, 0666)
-
-	/*match result {
-	  Err(_) => {*/
+	defer f_in.Close()
 	if err != nil {
-		fmt.Printf("The file: \"%s\" does not exist.", file_name_for_open)
+		fmt.Println("Error:", err)
 
 		if !send_message(s, "550 File name invalid.\r\n") {
 			return 0
 		}
 
 		return -1
-	} /*,
-	    Ok(f) => {
-	        f_in = f;
-	        if !send_message(s, "150 Data connection ready.\r\n") {
-	            if client_id > 0 {
-	                if !is_debug() {
-	                    delete_temp_files(&tmp, &tmp_directory, &tmp_file);
-	                }
-	            }
+	} else {
+		if !send_message(s, "150 Data connection ready.\r\n") {
+			if client_id > 0 {
+				if !is_debug() {
+					delete_temp_files(tmp, tmp_directory, tmp_file)
+				}
+			}
 
-	            return Ok(0);
-	        }
-	    }
-	}*/
+			return 0
+		}
+	}
 
 	send_to, err := net.Dial("tcp", connect_to)
+	defer send_to.Close()
 	if err != nil {
 		fmt.Println(err)
 		if client_id > 0 {
@@ -735,10 +742,13 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 		return 0
 	}
 
-	var temp_buffer []byte
+	var temp_buffer []byte = make([]byte, BIG_BUFFER_SIZE)
 
 	for {
 		var result, err = f_in.Read(temp_buffer)
+		if err == io.EOF {
+			break
+		}
 
 		var read_bytes int
 
@@ -782,61 +792,20 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 }
 
 // return '0' if not have error.
-func execute_system_command(command_name_with_keys, file_name_first, file_name_second string) int {
-	var cmd_args string
-
-	var all_args []string = strings.Split(command_name_with_keys, " ")
-	var is_first = true
-	for _, arg := range all_args {
-		if is_first {
-			cmd_args = arg
-			is_first = false
-		} else {
-			cmd_args = cmd_args + " " + arg
-		}
-	}
-
-	if len(file_name_first) > 0 {
-		cmd_args = cmd_args + " "
-		if strings.Contains(file_name_first, " ") {
-			cmd_args = cmd_args + "\""
-		}
-		cmd_args = cmd_args + file_name_first
-		if strings.Contains(file_name_first, " ") {
-			cmd_args = cmd_args + "\""
-		}
-	}
-
-	if len(file_name_second) > 0 {
-		cmd_args = cmd_args + " "
-		if strings.Contains(file_name_second, " ") {
-			cmd_args = cmd_args + "\""
-		}
-		cmd_args = cmd_args + file_name_second
-		if strings.Contains(file_name_second, " ") {
-			cmd_args = cmd_args + "\""
-		}
-	}
-
+func execute_system_command(args ...string) int {
 	if is_debug() {
-		fmt.Printf("Execute command: %s\n", cmd_args)
+		fmt.Printf("Execute command: %s\n", args)
 	}
 
-	var cmd = exec.Command("cmd.exe", cmd_args)
-	//        .arg("/C")
-	//        .raw_arg(&fmt.Sprintf("\"{cmd_args}\""))
-	//        .status()
-	//        .expect("command failed to start");
-	/*
-	   match status.code() {
-	       Some(code) => code,
-	       None => -1
-	   }
-	*/
-	err := cmd.Run()
-	if err != nil {
-		return -1
+	var cmd_args []string = make([]string, 1)
+	cmd_args[0] = "/C"
+	for _, arg := range args {
+		cmd_args = append(cmd_args, arg)
 	}
+	if err := exec.Command("cmd", cmd_args...).Run(); err != nil {
+		fmt.Println("Error:", err)
+	}
+
 	return 0
 }
 
