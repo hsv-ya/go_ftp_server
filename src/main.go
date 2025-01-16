@@ -418,15 +418,7 @@ func get_client_ip_and_port(receive_buffer []byte) string {
 		return ""
 	}
 
-	if is_debug() {
-		fmt.Println(parts)
-	}
-
 	var active_ip []string = parts[:4]
-
-	if is_debug() {
-		fmt.Println(active_ip)
-	}
 
 	var active_port []int = make([]int, 2)
 
@@ -446,10 +438,6 @@ func get_client_ip_and_port(receive_buffer []byte) string {
 		return ""
 	}
 	active_port[1] = int(value)
-
-	if is_debug() {
-		fmt.Println(active_port)
-	}
 
 	var ip_buffer = fmt.Sprintf("%s.%s.%s.%s", active_ip[0], active_ip[1], active_ip[2], active_ip[3])
 	fmt.Printf("\tClient's IP is %s\n", ip_buffer)
@@ -520,15 +508,7 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 		tmp_dir_files += " >"
 		tmp_dir_files += tmp_file
 
-		if is_debug() {
-			fmt.Printf("<<<DEBUG INFO>>>: %v %v\n", tmp_dir_files, current_directory)
-		}
-
 		execute_system_command(tmp_dir_files, current_directory)
-
-		if is_debug() {
-			fmt.Printf("<<<DEBUG INFO>>>: %v %v\n", tmp_dir_directory, current_directory)
-		}
 
 		execute_system_command(tmp_dir_directory, current_directory)
 
@@ -921,10 +901,6 @@ func command_delete(s TcpStream, receive_buffer []byte) bool {
 
 	execute_system_command(SYSTEM_COMMAND_DEL, tmp)
 
-	if is_debug() {
-		fmt.Printf("<<<DEBUG INFO>>>: %s %s\n", SYSTEM_COMMAND_DEL, tmp)
-	}
-
 	return send_message(s, "250 Requested file action okay, completed.\r\n")
 }
 
@@ -937,10 +913,6 @@ func command_make_directory(s TcpStream, receive_buffer []byte) bool {
 	replace_backslash(&tmp)
 
 	execute_system_command(SYSTEM_COMMAND_MKDIR, tmp)
-
-	if is_debug() {
-		fmt.Printf("<<<DEBUG INFO>>>: %s %s\n", SYSTEM_COMMAND_MKDIR, tmp)
-	}
 
 	var send_buffer = fmt.Sprintf("257 '/%s' directory created\r\n", tmp)
 
@@ -956,10 +928,6 @@ func command_delete_directory(s TcpStream, receive_buffer []byte) bool {
 	replace_backslash(&tmp)
 
 	execute_system_command(SYSTEM_COMMAND_RMDIR, tmp)
-
-	if is_debug() {
-		fmt.Printf("<<<DEBUG INFO>>>: %s %s\n", SYSTEM_COMMAND_RMDIR, tmp)
-	}
 
 	return send_message(s, "250 Requested file action okay, completed.\r\n")
 }
