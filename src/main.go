@@ -271,22 +271,20 @@ func communicate_with_client(s TcpStream, connect_to *string, authroised_login *
 
 // Receives message and saves it in receive buffer, returns false if connection ended.
 func receive_message(s TcpStream, receive_buffer *[]byte) bool {
-	var bytes int
+	var recv_bytes int
 	var buffer = make([]byte, 1)
 	var err error
 
 	*receive_buffer = make([]byte, 0)
 
 	for {
-		bytes, err = s.Read(buffer)
-
-		if err != nil {
-			log.Println("Read error:", err)
-			bytes = 0
+		if recv_bytes, err = s.Read(buffer); err == io.EOF {
 			break
 		}
 
-		if bytes == 0 {
+		if recv_bytes == 0 || err != nil {
+			log.Println("Read error:", err)
+			recv_bytes = 0
 			break
 		}
 
@@ -299,7 +297,7 @@ func receive_message(s TcpStream, receive_buffer *[]byte) bool {
 		*receive_buffer = append(*receive_buffer, buffer[:1]...)
 	}
 
-	if bytes == 0 {
+	if recv_bytes == 0 {
 		return false
 	}
 
@@ -533,8 +531,7 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 		var n int
 
 		for {
-			n, err = f_directory.Read(buffer_for_read)
-			if err == io.EOF {
+			if n, err = f_directory.Read(buffer_for_read); err == io.EOF {
 				break
 			}
 			if n != 1 || err != nil {
@@ -575,8 +572,7 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 		buffer = buffer[:0]
 
 		var f_files *os.File
-		f_files, err = os.Open(tmp_file)
-		if err != nil {
+		if f_files, err = os.Open(tmp_file); err != nil {
 			log.Panicln(err)
 			f_dir.Close()
 			f_files.Close()
@@ -588,8 +584,7 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 		var tmp_buffer_file string
 
 		for {
-			n, err = f_files.Read(buffer_for_read)
-			if err == io.EOF {
+			if n, err = f_files.Read(buffer_for_read); err == io.EOF {
 				break
 			}
 			if n != 1 || err != nil {
@@ -721,34 +716,25 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 	}
 
 	var temp_buffer []byte = make([]byte, BIG_BUFFER_SIZE)
+	var read_bytes int
 
 	for {
-		var result, err = f_in.Read(temp_buffer)
-		if err == io.EOF {
+		if read_bytes, err = f_in.Read(temp_buffer); err == io.EOF {
 			break
 		}
 
-		var read_bytes int
-
-		if err != nil {
+		if read_bytes == 0 || err != nil {
 			log.Println(err)
 			return 0
 		}
 
-		read_bytes = result
-
-		if read_bytes == 0 {
-			break
-		}
-
-		var bytes int
-		bytes, err = send_to.Write(temp_buffer[:read_bytes])
-		if err != nil {
+		var send_bytes int
+		if send_bytes, err = send_to.Write(temp_buffer[:read_bytes]); err != nil {
 			log.Println(err)
 			return 0
 		}
 
-		if bytes != read_bytes {
+		if send_bytes != read_bytes {
 			if client_id > 0 {
 				if !is_debug() {
 					delete_temp_files(tmp, tmp_directory, tmp_file)
@@ -850,12 +836,13 @@ func save_file(s TcpStream, connect_to, file_name, current_directory string) boo
 	}
 
 	var temp_buffer []byte = make([]byte, BIG_BUFFER_SIZE)
+	var recv_bytes int
 
 	for {
-		var recv_bytes, err = recv_from.Read(temp_buffer)
-		if err == io.EOF {
+		if recv_bytes, err = recv_from.Read(temp_buffer); err == io.EOF {
 			break
 		}
+
 		if err != nil {
 			log.Println(err)
 			return false
