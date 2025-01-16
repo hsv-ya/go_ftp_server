@@ -17,9 +17,13 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
+	"time"
 )
 
 var MONTHS = [...]string{
@@ -31,11 +35,13 @@ const SYSTEM_COMMAND_MKDIR = "mkdir"
 const SYSTEM_COMMAND_RMDIR = "rmdir"
 const SYSTEM_COMMAND_RENAME = "rename"
 
-var SHOW_DEBUG_MESSAGE chan bool = false
-var CONVERT_CYRILLIC chan bool = false
+var SHOW_DEBUG_MESSAGE bool
+var CONVERT_CYRILLIC bool
 
 const DEFAULT_PORT = "21"
 const BIG_BUFFER_SIZE uint = 65535
+
+type TcpStream = net.Conn
 
 // Arguments:
 //
@@ -43,42 +49,42 @@ const BIG_BUFFER_SIZE uint = 65535
 //	1:  Port number
 //	2:  Debug mode (true/false)
 //	3:  Use convert cyrillic file and directory name between Android and Windows 7 (true/false)
-func main() int {
-	//var argc = len(os.Args)
-	//var argv: Vec<String> = std::env::args().collect();
-
+func main() {
 	set_debug(debug_mode())
 
 	set_convert_cyrillic(convert_cyrillic())
 
-	/*if env::var("TEMP").is_err() {
-	      if is_debug() {
-	          writeln!(io::stdout(), "Error, not find environment <TEMP>!!")?;
-	      }
-	      return Err(io::Error::new(io::ErrorKind::Other, "TEMP not found"));
-	  } else {
-	      if var Ok(temp) = env::var("TEMP") {
-	          if temp.len() > 50 {
-	              if is_debug() {
-	                  writeln!(io::stdout(), "Error, very long size for environment <TEMP>!!")?;
-	              }
-	              return Err(io::Error::new(io::ErrorKind::Other, "TEMP too long"));
-	          }
-	      }
-	  }
-	*/
-	var result = get_server_address_info()
-	if len(result) == 0 {
-		return 1
+	var env_temp = get_temp_directory()
+
+	if len(env_temp) == 0 {
+		panic("Error, not find environment <TEMP>!!")
+	} else if len(env_temp) > 50 {
+		panic("Error, very long size for environment <TEMP>!!")
 	}
-	/*
-	   var listener = TcpListener::bind(result.unwrap()).unwrap();
-	*/
+
+	var port = get_server_address_info()
+
+	listener, err := net.Listen("tcp4", port)
+
+	if err != nil {
+		panic(err)
+	}
+
+	defer listener.Close()
+
 	show_server_info()
-	/*
-	   server_listen(listener)
-	*/
-	return 0
+
+	for {
+		conn, err := listener.Accept()
+
+		if err != nil {
+			fmt.Println(err)
+			conn.Close()
+			continue
+		}
+
+		go handle_clients(conn)
+	}
 }
 
 func set_debug(b bool) {
@@ -126,100 +132,78 @@ func show_server_info() {
 }
 
 // Gets the servers address information based on arguments.
-func get_server_address_info() /*Result<SocketAddr, i32>*/ {
-	var addr string
+func get_server_address_info() string {
+	var result string
 	if len(os.Args) > 1 {
-		//format!("0.0.0.0:{}", os.Args[1])
+		result = fmt.Sprintf(":%s", os.Args[1])
 	} else {
-		//format!("0.0.0.0:{}", DEFAULT_PORT)
+		result = fmt.Sprintf(":%s", DEFAULT_PORT)
 	}
-	/*
-	   var socket_addr = addr.to_socket_addrs()
-
-	   	.map_err(|_| 3)?
-	   	.next()
-	   	.ok_or(3)?;
-
-	   	if is_debug() {
-	   	    fmt.Println("<<<DEBUG INFO>>>: Server address information created.");
-	   	}
-
-	   Ok(socket_addr)
-	*/
-}
-
-// Listen for client communication and deal with it accordingly.
-func server_listen(listener TcpListener) {
-	/*
-	   for stream in listener.incoming() {
-	       match stream {
-	           Ok(s) => {
-	               thread::spawn(move || handle_clients(s));
-	           },
-	           Err(e) => panic!("Error listening for connections: {}", e),
-	       }
-	   }
-
-	   fmt.Println("SERVER SHUTTING DOWN...");
-
-	   Ok(())
-	*/
+	return result
 }
 
 // Accepts new clients and deals with commands.
 func handle_clients(s TcpStream) {
-	show_client_info(&s)
+	show_client_info(s)
 
-	if !send_message(&s, "220 FTP Server ready.\r\n") {
-		close_client_connection(&s)
+	if !send_message(s, "220 FTP Server ready.\r\n") {
+		close_client_connection(s)
 		return
 	}
 
 	var success = true
 	var authroised_login = false
 	var connect_to string
-	var client_id = 1 //s.peer_addr().unwrap().port();
+	var client_id int = get_client_port(s)
 	var current_directory string
-	var name_file_or_dir_for_rename = string
+	var name_file_or_dir_for_rename string
 
 	for success {
 		success = communicate_with_client(
 			s,
-			connect_to,
-			authroised_login,
+			&connect_to,
+			&authroised_login,
 			client_id,
-			current_directory,
-			name_file_or_dir_for_rename)
+			&current_directory,
+			&name_file_or_dir_for_rename)
 	}
 
-	close_client_connection(&s)
+	close_client_connection(s)
+}
+
+func get_client_port(s TcpStream) int {
+	tmp := strings.Split(s.RemoteAddr().String(), ":")[1]
+	value, err := strconv.ParseInt(tmp, 10, 64)
+	if err != nil {
+		fmt.Println(err)
+		return 0
+	}
+	return int(value)
 }
 
 // Takes incoming connection and assigns new socket.
 func show_client_info(s TcpStream) {
 	fmt.Println("A client has been accepted.")
 
-	var client_host = &s.peer_addr().unwrap().ip().to_string()
-	var client_service = &s.peer_addr().unwrap().port().to_string()
+	addr := strings.Split(s.RemoteAddr().String(), ":")
 
-	fmt.Print("Connected to client with IP address: {}", client_host)
-	fmt.Println(", at Port: {}", client_service)
+	fmt.Printf("Connected to client with IP address: %s, at Port: %s\n", addr[0], addr[1])
 }
 
 // Receive and handle messages from client, returns false if client ends connection.
-func communicate_with_client(s TcpStream, connect_to string, authroised_login bool, client_id u16, current_directory string, name_file_or_dir_for_rename string) bool {
+func communicate_with_client(s TcpStream, connect_to *string, authroised_login *bool, client_id int, current_directory *string, name_file_or_dir_for_rename *string) bool {
 	var receive_buffer []byte
 	var user_name string
 	var password string
 
-	var receipt_successful = receive_message(s, receive_buffer)
+	var receipt_successful = receive_message(s, &receive_buffer)
 	if !receipt_successful {
 		return receipt_successful
 	}
 
 	var success bool
 
-	var maybe_command string = receive_buffer[:4]
+	var maybe_command string = string(receive_buffer[:4])
 
 	switch maybe_command {
 	case "USER":
@@ -232,7 +216,7 @@ func communicate_with_client(s TcpStream, connect_to string, authroised_login bo
 				if !success {
 					i_attempts++
 
-					receipt_successful = receive_message(s, receive_buffer)
+					receipt_successful = receive_message(s, &receive_buffer)
 					if !receipt_successful {
 						return receipt_successful
 					}
@@ -245,66 +229,74 @@ func communicate_with_client(s TcpStream, connect_to string, authroised_login bo
 		}
 
 	case "PASS":
-		command_password(s, receive_buffer, password, *authroised_login)
+		success = command_password(s, receive_buffer, password, authroised_login)
 	case "SYST":
-		command_system_information(s)
+		success = command_system_information(s)
 	case "QUIT":
-		command_quit()
+		success = command_quit()
 	case "PORT":
-		command_port(s, connect_to, receive_buffer)
+		success = command_port(s, connect_to, receive_buffer)
 	case "LIST", "NLST":
-		command_list(s, connect_to, client_id, current_directory)
+		success = command_list(s, *connect_to, client_id, *current_directory)
 	case "RETR":
-		command_retrieve(s, connect_to, receive_buffer, current_directory)
+		success = command_retrieve(s, *connect_to, receive_buffer, *current_directory)
 	case "STOR":
-		command_store(s, connect_to, receive_buffer, current_directory)
+		success = command_store(s, *connect_to, receive_buffer, *current_directory)
 	case "CWD ":
-		command_change_working_directory(s, receive_buffer, current_directory)
+		success = command_change_working_directory(s, receive_buffer, current_directory)
 	case "DELE":
-		command_delete(s, receive_buffer)
+		success = command_delete(s, receive_buffer)
 	case "MKD ":
-		command_make_directory(s, receive_buffer)
+		success = command_make_directory(s, receive_buffer)
 	case "RMD ":
-		command_delete_directory(s, receive_buffer)
+		success = command_delete_directory(s, receive_buffer)
 	case "TYPE":
-		command_type(s, receive_buffer)
+		success = command_type(s, receive_buffer)
 	case "FEAT":
-		command_feat(s)
+		success = command_feat(s)
 	case "OPTS":
-		command_opts(s, receive_buffer)
+		success = command_opts(s, receive_buffer)
 	case "RNFR":
-		command_rename_from(s, receive_buffer, name_file_or_dir_for_rename)
+		success = command_rename_from(s, receive_buffer, name_file_or_dir_for_rename)
 	case "RNTO":
-		command_rename_to(s, receive_buffer, name_file_or_dir_for_rename)
+		success = command_rename_to(s, receive_buffer, name_file_or_dir_for_rename)
 	case "MFMT":
-		command_mfmt(s, receive_buffer)
+		success = command_mfmt(s, receive_buffer)
 	default:
-		command_unknown(s)
+		success = command_unknown(s)
 	}
 
 	return success
 }
 
 // Receives message and saves it in receive buffer, returns false if connection ended.
-func receive_message(s TcpStream, receive_buffer []byte) bool {
+func receive_message(s TcpStream, receive_buffer *[]byte) bool {
 	var bytes int
-	var buffer []byte
+	var buffer = make([]byte, 1)
+	var err error
+
+	*receive_buffer = make([]byte, 0)
 
 	for {
-		bytes = s.read(buffer)
+		bytes, err = s.Read(buffer)
+
+		if err != nil {
+			fmt.Println("Read error:", err)
+			bytes = 0
+			break
+		}
 
 		if bytes == 0 {
 			break
 		}
 
-		receive_buffer.push(buffer[0])
-
 		if buffer[0] == '\n' {
-			receive_buffer.pop()
 			break
 		} else if buffer[0] == '\r' {
-			receive_buffer.pop()
+			continue
 		}
+
+		*receive_buffer = append(*receive_buffer, buffer[:1]...)
 	}
 
 	if bytes == 0 {
@@ -312,45 +304,45 @@ func receive_message(s TcpStream, receive_buffer []byte) bool {
 	}
 
 	if is_debug() {
-		fmt.Printf("<--- &v", receive_buffer)
+		fmt.Printf("<--- %s\n", string(*receive_buffer))
 	}
 
-	true
+	return true
 }
 
 // Client sent USER command, returns false if fails.
-func command_user_name(s TcpStream, receive_buffer []byte, user_name string, authroised_login bool) bool {
-	remove_command(receive_buffer, user_name, 4)
+func command_user_name(s TcpStream, receive_buffer []byte, user_name string, authroised_login *bool) bool {
+	remove_command(receive_buffer, &user_name, 4)
 
 	//var user_name = String::from_utf8_lossy(&user_name);
 
-	fmt.Printf("User: \"%s\" attempting to login.", user_name)
+	fmt.Printf("User: \"%s\" attempting to login.\n", user_name)
 
-	*authroised_login = is_valid_user_name(&user_name)
+	*authroised_login = is_valid_user_name(user_name)
 
 	if *authroised_login {
 		fmt.Println("User name valid. Password required.")
 
-		send_message(s, "331 Authorised login requested, please specify the password.\r\n")
+		return send_message(s, "331 Authorised login requested, please specify the password.\r\n")
 	} else {
 		fmt.Println("User name unauthorised. Public access only.")
 
-		send_message(s, "331 Public login requested, please specify email as password.\r\n")
+		return send_message(s, "331 Public login requested, please specify email as password.\r\n")
 	}
 }
 
 // Send message to client, returns true if message was sended.
 func send_message(s TcpStream, send_buffer string) bool {
 	var bytes = len(send_buffer)
-	/*bytes = s.write_all(send_buffer.as_bytes()) {
-	    Ok(()) => {
-	        if is_debug() {
-	            print!("---> {}", send_buffer);
-	        }
-	    },
-	    Err(_) => bytes = 0
-	};*/
-	return bytes == len(send_buffer)
+	n, err := s.Write([]byte(send_buffer))
+	if err != nil {
+		fmt.Println(err)
+		return false
+	}
+	if is_debug() {
+		fmt.Printf("---> %s", send_buffer)
+	}
+	return bytes == n
 }
 
 // Returns true if valid user name.
@@ -359,8 +351,8 @@ func is_valid_user_name(user_name string) bool {
 }
 
 // Client sent PASS command, returns false if fails.
-func command_password(s TcpStream, receive_buffer []byte, password string, authroised_login bool) bool {
-	remove_command(receive_buffer, password, 4)
+func command_password(s TcpStream, receive_buffer []byte, password string, authroised_login *bool) bool {
+	remove_command(receive_buffer, &password, 4)
 
 	var valid_password = is_valid_password(password, authroised_login)
 
@@ -380,12 +372,12 @@ func command_password(s TcpStream, receive_buffer []byte, password string, authr
 		return false
 	}
 
-	valid_password
+	return valid_password
 }
 
 // Returns true if valid password.
-func is_valid_password(password string, authroised_login bool) bool {
-	if authroised_login {
+func is_valid_password(password string, authroised_login *bool) bool {
+	if *authroised_login {
 		return password == "334"
 	} else {
 		return is_email_address(password)
@@ -407,63 +399,68 @@ func command_quit() bool {
 }
 
 // Client sent PORT command, returns false if fails.
-func command_port(s TcpStream, connect_to string, receive_buffer []byte) bool {
+func command_port(s TcpStream, connect_to *string, receive_buffer []byte) bool {
 	fmt.Println("===================================================")
 	fmt.Println("\tActive FTP mode, the client is listening...")
 
 	*connect_to = get_client_ip_and_port(receive_buffer)
 
-	if connect_to.len() == 0 {
-		send_argument_syntax_error(s)
+	if len(*connect_to) == 0 {
+		return send_argument_syntax_error(s)
 	} else {
-		send_message(s, "200 PORT Command successful.\r\n")
+		return send_message(s, "200 PORT Command successful.\r\n")
 	}
 }
 
 // Gets the client's IP and port number for active connection.
 func get_client_ip_and_port(receive_buffer []byte) string {
-	var temp_string = string(receive_buffer[5:])
-	var parts []string = strings.split(temp_string, ",")
+	var parts []string = strings.Split(string(receive_buffer[5:]), ",")
 
-	if parts.len() != 6 || !receive_buffer.starts_with("PORT ") {
+	if cap(parts) != 6 {
 		return ""
 	}
 
 	if is_debug() {
-		fmt.Println("%v", parts)
+		fmt.Println(parts)
 	}
 
 	var active_ip []string = parts[:4]
-	//    .iter()
-	//    .map(|&s| s.parse::<u8>().unwrap())
-	//    .collect();
 
 	if is_debug() {
-		fmt.Println("%v", active_ip)
+		fmt.Println(active_ip)
 	}
 
-	var active_port []string = parts[4:]
-	//    .iter()
-	//    .map(|&s| s.parse::<u16>().unwrap())
-	//    .collect();
+	var active_port []int = make([]int, 2)
+
+	var value int64
+	var err error
+
+	value, err = strconv.ParseInt(parts[4], 10, 64)
+	if err != nil {
+		fmt.Println(err)
+		return ""
+	}
+	active_port[0] = int(value)
+
+	value, err = strconv.ParseInt(parts[5], 10, 64)
+	if err != nil {
+		fmt.Println(err)
+		return ""
+	}
+	active_port[1] = int(value)
 
 	if is_debug() {
-		fmt.Println("%v", active_port)
+		fmt.Println(active_port)
 	}
 
 	var ip_buffer = fmt.Sprintf("%s.%s.%s.%s", active_ip[0], active_ip[1], active_ip[2], active_ip[3])
-	fmt.Println("\tClient's IP is %v", ip_buffer)
+	fmt.Printf("\tClient's IP is %s\n", ip_buffer)
 
-	var port_decimal = (active_port[0] << 8) + active_port[1]
-	var port_buffer = port_decimal.to_string()
-	fmt.Println("\tClient's Port is {}", port_buffer)
+	var port_decimal int = active_port[0]<<8 | active_port[1]
+	var port_buffer = strconv.Itoa(port_decimal)
+	fmt.Printf("\tClient's Port is %s\n", port_buffer)
 
-	var result2 string
-	result2 += ip_buffer.as_str()
-	result2 += ":"
-	result2 += port_buffer.as_str()
-
-	return result2
+	return ip_buffer + ":" + port_buffer
 }
 
 func send_argument_syntax_error(s TcpStream) bool {
@@ -476,17 +473,16 @@ func send_failed_active_connection(s TcpStream) bool {
 }
 
 // Client sent LIST command, returns false if fails.
-func command_list(s TcpStream, connect_to string, client_id u16, current_directory string) bool {
+func command_list(s TcpStream, connect_to string, client_id int, current_directory string) bool {
 	var path_temp = get_temp_directory()
 
 	var tmp = fmt.Sprintf("%s\\%d_tmp_dir.txt", path_temp, client_id)
 
-	var result = send_file(s, connect_to, tmp.as_str(), client_id, current_directory.as_str())
+	var result = send_file(s, connect_to, tmp, client_id, current_directory)
 
-	/*match result {
-	    Ok(_) => {},
-	    Err(_) => return false
-	};*/
+	if result != 1 {
+		return false
+	}
 
 	return send_message(s, "226 Directory send OK.\r\n")
 }
@@ -501,8 +497,8 @@ func delete_temp_files(file1, file2, file3 string) {
 	execute_system_command(SYSTEM_COMMAND_DEL, file3, "")
 }
 
-// Sends specified file to client.
-func send_file(s TcpStream, connect_to string, file_name string, client_id u16, current_directory string) /*-> Result<*/ i32 /*, std::io::Error>*/ {
+// Sends specified file to client, return '1' if not have error.
+func send_file(s TcpStream, connect_to string, file_name string, client_id int, current_directory string) int {
 	var tmp string
 	var tmp_directory string
 	var tmp_file string
@@ -511,145 +507,178 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id u16, 
 
 	if client_id > 0 {
 		fmt.Println("Client has requested the directory listing.")
-		/*
-		   var now = Utc::now();
-		   var (_is_common_era, year) = now.year_ce();
 
-		   var path_temp = get_temp_directory();
+		year := int64(time.Now().Year())
 
-		   tmp = format!("{}\\{}_tmp_dir.txt", path_temp, client_id).to_string();
-		   tmp_directory = format!("{}\\{}_tmp_dir2.txt", path_temp, client_id).to_string();
-		   tmp_file = format!("{}\\{}_tmp_dir3.txt", path_temp, client_id).to_string();
+		var path_temp = get_temp_directory()
 
-		   tmp_dir_directory += " >";
-		   tmp_dir_directory += &tmp_directory;
+		tmp = fmt.Sprintf("%s\\%d_tmp_dir.txt", path_temp, client_id)
+		tmp_directory = fmt.Sprintf("%s\\%d_tmp_dir2.txt", path_temp, client_id)
+		tmp_file = fmt.Sprintf("%s\\%d_tmp_dir3.txt", path_temp, client_id)
 
-		   tmp_dir_files += " >";
-		   tmp_dir_files += &tmp_file;
+		tmp_dir_directory += " >"
+		tmp_dir_directory += tmp_directory
 
-		   if is_debug() {
-		       fmt.Println("<<<DEBUG INFO>>>: {} {}", tmp_dir_files, current_directory);
-		   }
+		tmp_dir_files += " >"
+		tmp_dir_files += tmp_file
 
-		   execute_system_command(tmp_dir_files.as_str(), current_directory, "");
+		if is_debug() {
+			fmt.Printf("<<<DEBUG INFO>>>: %v %v\n", tmp_dir_files, current_directory)
+		}
 
-		   if is_debug() {
-		       fmt.Println("<<<DEBUG INFO>>>: {} {}", tmp_dir_directory, current_directory);
-		   }
+		execute_system_command(tmp_dir_files, current_directory, "")
 
-		   execute_system_command(tmp_dir_directory.as_str(), current_directory, "");
+		if is_debug() {
+			fmt.Printf("<<<DEBUG INFO>>>: %v %v\n", tmp_dir_directory, current_directory)
+		}
 
-		   var f_in_dir = File::create(tmp.as_str())?;
+		execute_system_command(tmp_dir_directory, current_directory, "")
 
-		   var f_in_directory = File::open(tmp_directory.as_str())?;
+		f_dir, err := os.Create(tmp)
+		if err != nil {
+			fmt.Println(err)
+			return 0
+		}
 
-		   var is_first = true;
+		f_directory, err := os.Open(tmp_directory)
+		if err != nil {
+			fmt.Println(err)
+			f_dir.Close()
+			return 0
+		}
 
-		   var buffer []byte []byte
+		var is_first = true
 
-		   for iter in f_in_directory.bytes() {
-		       var byte = iter.unwrap();
-		       if byte == b'\r' {
-		           continue;
-		       } else if byte == b'\n' {
-		           var tmp_buffer_dir: String = "drw-rw-rw-    1 user       group        512 Oct 15  2024 ".to_string();
-		           if !is_convert_cyrillic() {
-		               var line = String::from_utf8_lossy(&buffer[0..]);
-		               tmp_buffer_dir += &line;
-		           } else {
-		               var tmp_new_file_name []byte []byte
-		               simple_conv(buffer.clone(), tmp_new_file_name, false);
-		               var str_tmp_new_file_name = String::from_utf8_lossy(&tmp_new_file_name[0..]);
-		               tmp_buffer_dir += &str_tmp_new_file_name;
-		           }
-		           if !is_first {
-		               var _ = f_in_dir.write_all("\n".as_bytes());
-		           } else {
-		               is_first = false;
-		           }
-		           var _ = f_in_dir.write_all(tmp_buffer_dir.as_bytes());
-		           if is_debug() {
-		               fmt.Println("{}", tmp_buffer_dir);
-		           }
-		           buffer.clear();
-		       } else {
-		           buffer.push(byte);
-		       }
-		   }
+		var buffer []byte
+		var buffer_for_read = make([]byte, 1)
+		var n int
 
-		   var result = File::open(tmp_file.as_str());
-		   var f_in_files;
-		   match result {
-		       Ok(f) => f_in_files = f,
-		       Err(e) => panic!("{:?} '{}'", e, tmp_file)
-		   }
+		for {
+			n, err = f_directory.Read(buffer_for_read)
+			if err == io.EOF {
+				break
+			}
+			if n != 1 && err != nil {
+				fmt.Println(err)
+				break
+			}
+			var b byte = buffer_for_read[0]
+			if b == '\r' {
+				continue
+			} else if b == '\n' {
+				var tmp_buffer_dir = "drw-rw-rw-    1 user       group        512 Oct 15  2024 "
+				if !is_convert_cyrillic() {
+					var line = string(buffer)
+					tmp_buffer_dir += line
+				} else {
+					var tmp_new_file_name []byte
+					simple_conv(buffer, &tmp_new_file_name, false)
+					var str_tmp_new_file_name = string(tmp_new_file_name)
+					tmp_buffer_dir += str_tmp_new_file_name
+				}
+				if !is_first {
+					f_dir.Write([]byte("\n"))
+				} else {
+					is_first = false
+				}
+				f_dir.Write([]byte(tmp_buffer_dir))
+				if is_debug() {
+					fmt.Println(tmp_buffer_dir)
+				}
+				buffer = buffer[:0]
+			} else {
+				buffer = append(buffer, b)
+			}
+		}
 
-		   var skip_lines = 5;
-		   var tmp_file_name: String;
-		   var tmp_buffer_file: String;
+		f_directory.Close()
 
-		   for iter in f_in_files.bytes() {
-		       var byte = iter.unwrap();
-		       if byte == b'\r' {
-		           continue;
-		       } else if byte == b'\n' {
-		           if skip_lines > 0 {
-		               skip_lines -= 1;
-		               buffer.clear();
-		               continue;
-		           }
+		buffer = buffer[:0]
 
-		           if is_numerical(buffer[0]) {
-		               var line = String::from_utf8_lossy(&buffer[0..36]);
+		var f_files *os.File
+		f_files, err = os.Open(tmp_file)
+		if err != nil {
+			fmt.Println(err)
+			return 0
+		}
 
-		               var v: Vec<&str> = line.split_whitespace().collect();
-		               var tmp_date = v[0];
+		var skip_lines = 5
+		var tmp_file_name string
+		var tmp_buffer_file string
 
-		               var i_day = (tmp_date[0..=1]).to_string().parse::<u8>().unwrap();
-		               var i_month = (tmp_date[3..=4]).to_string().parse::<usize>().unwrap();
-		               var i_year = (tmp_date[6..=9]).to_string().parse::<u32>().unwrap();
+		for {
+			n, err = f_files.Read(buffer_for_read)
+			if err == io.EOF {
+				break
+			}
+			if n != 1 && err != nil {
+				fmt.Println(err)
+				break
+			}
+			var b byte = buffer_for_read[0]
+			if b == '\r' {
+				continue
+			} else if b == '\n' {
+				if skip_lines > 0 {
+					skip_lines -= 1
+					buffer = buffer[:0]
+					continue
+				}
 
-		               var tmp_time = v[1];
-		               var i_hour = (tmp_time[0..=1]).to_string().parse::<u8>().unwrap();
-		               var i_minute = (tmp_time[3..=4]).to_string().parse::<u8>().unwrap();
+				if is_numerical(buffer[0]) {
+					var line = string(buffer[0:36])
 
-		               var tmp_file_size = v[2];
-		               var file_size: usize = tmp_file_size.parse::<usize>().unwrap();
+					var v []string = strings.Split(line, " ")
+					var tmp_date = []byte(v[0])
 
-		               var tmp_file_name_vec []byte = (&buffer[36..]).into();
+					var i_day, i_month, i_year int64
+					i_day, err = strconv.ParseInt(string(tmp_date[0:2]), 10, 8)
+					i_month, err = strconv.ParseInt(string(tmp_date[3:5]), 10, 8)
+					i_year, err = strconv.ParseInt(string(tmp_date[6:10]), 10, 64)
 
-		               if year == i_year {
-		                   tmp_buffer_file = format!("-rw-rw-rw-    1 user       group {:10} {} {:02} {:02}:{:02} ", file_size, MONTHS[i_month - 1], i_day, i_hour, i_minute).to_string();
-		               } else {
-		                   tmp_buffer_file = format!("-rw-rw-rw-    1 user       group {:10} {} {:02}  {:04} ", file_size, MONTHS[i_month - 1], i_day, i_year).to_string();
-		               }
-		               if !is_convert_cyrillic() {
-		                   tmp_file_name = String::from_utf8_lossy(&buffer[36..]).to_string();
-		                   tmp_buffer_file += &tmp_file_name;
-		               } else {
-		                   var tmp_new_file_name_vec []byte []byte
-		                   simple_conv(tmp_file_name_vec, tmp_new_file_name_vec, false);
-		                   var tmp_new_file_name = String::from_utf8_lossy(&tmp_new_file_name_vec[0..]);
-		                   tmp_buffer_file += &tmp_new_file_name;
-		               }
-		               if !is_first {
-		                   var _ = f_in_dir.write_all("\n".as_bytes());
-		               } else {
-		                   is_first = false;
-		               }
-		               var _ = f_in_dir.write_all(tmp_buffer_file.as_bytes());
-		               if is_debug() {
-		                   fmt.Println("{}", tmp_buffer_file);
-		               }
-		           }
-		           buffer.clear();
-		       } else {
-		           buffer.push(byte);
-		       }
-		   }
+					var tmp_time = []byte(v[1])
+					var i_hour, i_minute int64
+					i_hour, err = strconv.ParseInt(string(tmp_time[0:2]), 10, 8)
+					i_minute, err = strconv.ParseInt(string(tmp_time[3:5]), 10, 8)
 
-		   var _ = f_in_dir.write_all("\n".as_bytes());
-		*/
+					var tmp_file_size = v[2]
+
+					var file_size int64
+					file_size, err = strconv.ParseInt(tmp_file_size, 10, 64)
+
+					var tmp_file_name_vec []byte = buffer[36:]
+
+					if year == i_year {
+						tmp_buffer_file = fmt.Sprintf("-rw-rw-rw-    1 user       group %10d %s %02d %02d:%02d ", file_size, MONTHS[i_month-1], i_day, i_hour, i_minute)
+					} else {
+						tmp_buffer_file = fmt.Sprintf("-rw-rw-rw-    1 user       group %10d %s %02d  %04d ", file_size, MONTHS[i_month-1], i_day, i_year)
+					}
+					if !is_convert_cyrillic() {
+						tmp_file_name = string(buffer[36:])
+						tmp_buffer_file += tmp_file_name
+					} else {
+						var tmp_new_file_name_vec []byte
+						simple_conv(tmp_file_name_vec, &tmp_new_file_name_vec, false)
+						var tmp_new_file_name = string(tmp_new_file_name_vec)
+						tmp_buffer_file += tmp_new_file_name
+					}
+					if !is_first {
+						f_dir.Write([]byte("\n"))
+					} else {
+						is_first = false
+					}
+					f_dir.Write([]byte(tmp_buffer_file))
+					if is_debug() {
+						fmt.Println(tmp_buffer_file)
+					}
+				}
+				buffer = buffer[:0]
+			} else {
+				buffer = append(buffer, b)
+			}
+		}
+
+		f_dir.Write([]byte("\n"))
 	} else {
 		fmt.Printf("Client has requested to retrieve the file: \"%s\".", file_name)
 	}
@@ -657,11 +686,11 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id u16, 
 	var file_name_for_open string
 
 	if client_id > 0 {
-		file_name_for_open = tmp.clone()
+		file_name_for_open = tmp
 	} else {
-		file_name_for_open = current_directory.to_string()
+		file_name_for_open = current_directory
 
-		if file_name_for_open.len() > 0 {
+		if len(file_name_for_open) > 0 {
 			file_name_for_open += "\\"
 		}
 
@@ -695,44 +724,46 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id u16, 
 	    }
 	}*/
 
-	/*var temp_buffer = [0; BIG_BUFFER_SIZE];
-	  var send_to;
+	send_to, err := net.Dial("tcp", connect_to)
+	if err != nil {
+		fmt.Println(err)
+		if client_id > 0 {
+			if !is_debug() {
+				delete_temp_files(tmp, tmp_directory, tmp_file)
+			}
+		}
+		return 0
+	}
 
-	  match TcpStream::connect(connect_to.as_str()) {
-	      Ok(stream) => send_to = stream,
-	      Err(_) => {
-	          if client_id > 0 {
-	              if !is_debug() {
-	                  delete_temp_files(&tmp, &tmp_directory, &tmp_file);
-	              }
-	          }
-	          return Ok(0);
-	      }
-	  }*/
+	var temp_buffer []byte
 
 	for {
-		//var result = f_in.read(temp_buffer[..]);
+		var result, err = f_in.Read(temp_buffer)
 
 		var read_bytes int
-		/*
-		   match result {
-		       Ok(n) => read_bytes = n,
-		       Err(_) => read_bytes = 0
-		   }
-		*/
+
+		if err != nil {
+			fmt.Println(err)
+			return 0
+		}
+
+		read_bytes = result
+
 		if read_bytes == 0 {
 			break
 		}
-		/*
-		   var bytes = match send_to.write_all(&temp_buffer[..read_bytes]) {
-		       Ok(()) => read_bytes,
-		       Err(_) => 0,
-		   };
-		*/
+
+		var bytes int
+		bytes, err = send_to.Write(temp_buffer[:read_bytes])
+		if err != nil {
+			fmt.Println(err)
+			return 0
+		}
+
 		if bytes != read_bytes {
 			if client_id > 0 {
 				if !is_debug() {
-					delete_temp_files(&tmp, &tmp_directory, &tmp_file)
+					delete_temp_files(tmp, tmp_directory, tmp_file)
 				}
 			}
 			return 0
@@ -741,7 +772,7 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id u16, 
 
 	if client_id > 0 {
 		if !is_debug() {
-			delete_temp_files(&tmp, &tmp_directory, &tmp_file)
+			delete_temp_files(tmp, tmp_directory, tmp_file)
 		}
 	}
 
@@ -751,52 +782,49 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id u16, 
 }
 
 // return '0' if not have error.
-func execute_system_command(command_name_with_keys, file_name_first, file_name_second string) i32 {
-	//use std::os::windows::process::CommandExt;
-
+func execute_system_command(command_name_with_keys, file_name_first, file_name_second string) int {
 	var cmd_args string
 
-	var all_args []string = strings.split(command_name_with_keys, " ")
+	var all_args []string = strings.Split(command_name_with_keys, " ")
 	var is_first = true
-	/*for arg in all_args {
-	    if is_first {
-	        cmd_args = arg.to_string();
-	        is_first = false;
-	    } else {
-	        cmd_args.push_str(" ");
-	        cmd_args.push_str(arg);
-	    }
-	}*/
+	for _, arg := range all_args {
+		if is_first {
+			cmd_args = arg
+			is_first = false
+		} else {
+			cmd_args = cmd_args + " " + arg
+		}
+	}
 
 	if len(file_name_first) > 0 {
-		cmd_args.push_str(" ")
-		if file_name_first.contains(" ") {
-			cmd_args.push_str("\"")
+		cmd_args = cmd_args + " "
+		if strings.Contains(file_name_first, " ") {
+			cmd_args = cmd_args + "\""
 		}
-		cmd_args.push_str(file_name_first)
-		if file_name_first.contains(" ") {
-			cmd_args.push_str("\"")
+		cmd_args = cmd_args + file_name_first
+		if strings.Contains(file_name_first, " ") {
+			cmd_args = cmd_args + "\""
 		}
 	}
 
 	if len(file_name_second) > 0 {
-		cmd_args.push_str(" ")
-		if file_name_second.contains(" ") {
-			cmd_args.push_str("\"")
+		cmd_args = cmd_args + " "
+		if strings.Contains(file_name_second, " ") {
+			cmd_args = cmd_args + "\""
 		}
-		cmd_args.push_str(file_name_second)
-		if file_name_second.contains(" ") {
-			cmd_args.push_str("\"")
+		cmd_args = cmd_args + file_name_second
+		if strings.Contains(file_name_second, " ") {
+			cmd_args = cmd_args + "\""
 		}
 	}
 
 	if is_debug() {
-		fmt.Println("Execute command: {}", cmd_args)
+		fmt.Printf("Execute command: %s\n", cmd_args)
 	}
 
 	var cmd = exec.Command("cmd.exe", cmd_args)
 	//        .arg("/C")
-	//        .raw_arg(&format!("\"{cmd_args}\""))
+	//        .raw_arg(&fmt.Sprintf("\"{cmd_args}\""))
 	//        .status()
 	//        .expect("command failed to start");
 	/*
@@ -814,46 +842,45 @@ func execute_system_command(command_name_with_keys, file_name_first, file_name_s
 
 // Client sent RETR command, returns false if fails.
 func command_retrieve(s TcpStream, connect_to string, receive_buffer []byte, current_directory string) bool {
-	var tmp_vec []byte
+	var tmp string
 
-	remove_command(receive_buffer, tmp_vec, 4)
+	remove_command(receive_buffer, &tmp, 4)
 
-	var tmp = string(tmp_vec)
+	var result = send_file(s, connect_to, tmp, 0, current_directory)
 
-	var result = send_file(s, connect_to, tmp.as_str(), 0, current_directory.as_str())
-
-	/*match result {
-	    Ok(_) => {},
-	    Err(_) => return false
-	};*/
+	if result == 1 {
+		return false
+	}
 
 	return send_message(s, "226 File transfer complete.\r\n")
 }
 
 // Client sent STORE command, returns false if fails.
 func command_store(s TcpStream, connect_to string, receive_buffer []byte, current_directory string) bool {
-	var tmp_vec []byte
+	var tmp string
 
-	remove_command(receive_buffer, tmp_vec, 4)
+	remove_command(receive_buffer, &tmp, 4)
 
-	var tmp = string(tmp_vec)
-
-	var result = save_file(s, connect_to, tmp.as_str(), current_directory.as_str())
+	var result = save_file(s, connect_to, tmp, current_directory)
 
 	if !result {
 		return result
 	}
 
-	send_message(s, "226 File transfer complete.\r\n")
+	return send_message(s, "226 File transfer complete.\r\n")
 }
 
 // Sends specified file to client.
 func save_file(s TcpStream, connect_to, file_name, current_directory string) bool {
-	fmt.Println("Client has requested to store the file: \"{}\".", file_name)
+	fmt.Printf("Client has requested to store the file: \"%s\".\n", file_name)
 
-	var recv_from []byte
-
-	/*match TcpStream::connect(connect_to.as_str()) {
+	recv_from, err := net.Dial("tcp", connect_to)
+	if err != nil {
+		fmt.Println(err)
+		send_failed_active_connection(s)
+		return false
+	}
+	/*match TcpStream::connect(connect_to) {
 	    Ok(stream) => recv_from = stream,
 	    Err(_) => {
 	        send_failed_active_connection(s);
@@ -873,23 +900,32 @@ func save_file(s TcpStream, connect_to, file_name, current_directory string) boo
 
 	file_name_full += file_name
 
-	var f_out_file, err = os.Create(file_name_full)
+	var f_out_file *os.File
+	f_out_file, err = os.Create(file_name_full)
 	/*var f_out_file;
 	  match result {
 	      Ok(f) => f_out_file = f,
 	      Err(_) => return false
 	  }*/
 	if err != nil {
+		fmt.Println(err)
 		return false
 	}
 
 	var temp_buffer []byte // = vec![0; BIG_BUFFER_SIZE];
 
 	for {
-		var recv_bytes = recv_from.read(temp_buffer)
+		var recv_bytes, err = recv_from.Read(temp_buffer)
+		if err != nil {
+			fmt.Println(err)
+			return false
+		}
 
 		if recv_bytes > 0 {
-			var _ = f_out_file.write_all(&temp_buffer[:recv_bytes])
+			if n, err := f_out_file.Write(temp_buffer); n == 0 || err != nil {
+				fmt.Println(err)
+				return false
+			}
 		} else {
 			break
 		}
@@ -901,36 +937,34 @@ func save_file(s TcpStream, connect_to, file_name, current_directory string) boo
 }
 
 // Client sent CWD command, returns false if connection ended.
-func command_change_working_directory(s TcpStream, receive_buffer []byte, current_directory string) bool {
-	var tmp_vec []byte
+func command_change_working_directory(s TcpStream, receive_buffer []byte, current_directory *string) bool {
+	var tmp string
 
-	remove_command(receive_buffer, tmp_vec, 4)
+	remove_command(receive_buffer, &tmp, 4)
 
-	replace_backslash(tmp_vec)
+	replace_backslash(&tmp)
 
-	current_directory = string(tmp_vec)
+	*current_directory = tmp
 
-	if current_directory == "\\" {
-		*current_directory = "".to_string()
+	if *current_directory == "\\" {
+		*current_directory = ""
 	}
 
-	send_message(s, "250 Directory successfully changed.\r\n")
+	return send_message(s, "250 Directory successfully changed.\r\n")
 }
 
 // Client sent DELETE command, returns false if connection ended.
 func command_delete(s TcpStream, receive_buffer []byte) bool {
-	var tmp_vec []byte
+	var tmp string
 
-	remove_command(receive_buffer, tmp_vec, 5)
+	remove_command(receive_buffer, &tmp, 5)
 
-	replace_backslash(tmp_vec)
+	replace_backslash(&tmp)
 
-	var tmp = string(tmp_vec)
-
-	execute_system_command(SYSTEM_COMMAND_DEL, tmp.as_str(), "")
+	execute_system_command(SYSTEM_COMMAND_DEL, tmp, "")
 
 	if is_debug() {
-		fmt.Println("<<<DEBUG INFO>>>: {} {}", SYSTEM_COMMAND_DEL, tmp)
+		fmt.Printf("<<<DEBUG INFO>>>: %s %s\n", SYSTEM_COMMAND_DEL, tmp)
 	}
 
 	return send_message(s, "250 Requested file action okay, completed.\r\n")
@@ -938,39 +972,35 @@ func command_delete(s TcpStream, receive_buffer []byte) bool {
 
 // Client sent MKD command, returns false if connection ended.
 func command_make_directory(s TcpStream, receive_buffer []byte) bool {
-	var tmp_vec []byte
+	var tmp string
 
-	remove_command(receive_buffer, tmp_vec, 4)
+	remove_command(receive_buffer, &tmp, 4)
 
-	replace_backslash(tmp_vec)
+	replace_backslash(&tmp)
 
-	var tmp = string(tmp_vec)
-
-	execute_system_command(SYSTEM_COMMAND_MKDIR, tmp.as_str(), "")
+	execute_system_command(SYSTEM_COMMAND_MKDIR, tmp, "")
 
 	if is_debug() {
-		fmt.Println("<<<DEBUG INFO>>>: {} {}", SYSTEM_COMMAND_MKDIR, tmp)
+		fmt.Printf("<<<DEBUG INFO>>>: %s %s\n", SYSTEM_COMMAND_MKDIR, tmp)
 	}
 
 	var send_buffer = fmt.Sprintf("257 '/%s' directory created\r\n", tmp)
 
-	return send_message(s, &send_buffer)
+	return send_message(s, send_buffer)
 }
 
 // Client sent RMD command, returns false if connection ended.
 func command_delete_directory(s TcpStream, receive_buffer []byte) bool {
-	var tmp_vec []byte
+	var tmp string
 
-	remove_command(receive_buffer, tmp_vec, 4)
+	remove_command(receive_buffer, &tmp, 4)
 
-	replace_backslash(tmp_vec)
+	replace_backslash(&tmp)
 
-	var tmp = string(tmp_vec)
-
-	execute_system_command(SYSTEM_COMMAND_RMDIR, tmp.as_str(), "")
+	execute_system_command(SYSTEM_COMMAND_RMDIR, tmp, "")
 
 	if is_debug() {
-		fmt.Println("<<<DEBUG INFO>>>: {} {}", SYSTEM_COMMAND_RMDIR, tmp)
+		fmt.Printf("<<<DEBUG INFO>>>: %s %s\n", SYSTEM_COMMAND_RMDIR, tmp)
 	}
 
 	return send_message(s, "250 Requested file action okay, completed.\r\n")
@@ -978,15 +1008,13 @@ func command_delete_directory(s TcpStream, receive_buffer []byte) bool {
 
 // Client sent TYPE command, returns false if connection ended.
 func command_type(s TcpStream, receive_buffer []byte) bool {
-	var tmp []byte
+	var type_name string
 
-	remove_command(receive_buffer, tmp, 4)
-
-	var type_name = string(tmp)
+	remove_command(receive_buffer, &type_name, 4)
 
 	var send_buffer = fmt.Sprintf("200 Type set to %s.\r\n", type_name)
 
-	return send_message(s, &send_buffer)
+	return send_message(s, send_buffer)
 }
 
 // Client sent FEAT command, returns false if fails.
@@ -996,11 +1024,9 @@ func command_feat(s TcpStream) bool {
 
 // Client sent OPTS command, returns false if connection ended.
 func command_opts(s TcpStream, receive_buffer []byte) bool {
-	var tmp_vec []byte
+	var opts_name string
 
-	remove_command(receive_buffer, tmp_vec, 4)
-
-	var opts_name = string(tmp_vec)
+	remove_command(receive_buffer, &opts_name, 4)
 
 	if opts_name == "UTF8 ON" {
 		return send_message(s, "200 UTF8 ON.\r\n")
@@ -1010,41 +1036,41 @@ func command_opts(s TcpStream, receive_buffer []byte) bool {
 }
 
 // Client sent RNFR command, returns false if connection ended.
-func command_rename_from(s TcpStream, receive_buffer []byte, name_file_or_dir_for_rename string) bool {
-	var tmp_vec []byte
+func command_rename_from(s TcpStream, receive_buffer []byte, name_file_or_dir_for_rename *string) bool {
+	var tmp string
 
-	remove_command(receive_buffer, tmp_vec, 5)
+	remove_command(receive_buffer, &tmp, 5)
 
-	replace_backslash(tmp_vec)
+	replace_backslash(&tmp)
 
-	*name_file_or_dir_for_rename = string(tmp_vec)
+	*name_file_or_dir_for_rename = tmp
 
 	return send_message(s, "350 Requested file action pending further information.\r\n")
 }
 
 // Client sent RNTO command, returns false if connection ended.
-func command_rename_to(s TcpStream, receive_buffer []byte, name_file_or_dir_for_rename string) bool {
-	var tmp_vec []byte
+func command_rename_to(s TcpStream, receive_buffer []byte, name_file_or_dir_for_rename *string) bool {
+	var tmp string
 
-	remove_command(receive_buffer, tmp_vec, 5)
+	remove_command(receive_buffer, &tmp, 5)
 
-	replace_backslash(tmp_vec)
+	replace_backslash(&tmp)
 
-	var name_file_or_dir_to_rename = string(tmp_vec)
+	var name_file_or_dir_to_rename = tmp
 
-	if (0 == name_file_or_dir_for_rename.len()) || (0 == name_file_or_dir_to_rename.len()) {
-		name_file_or_dir_for_rename.clear()
+	if 0 == len(*name_file_or_dir_for_rename) || 0 == len(name_file_or_dir_to_rename) {
+		*name_file_or_dir_for_rename = ""
 
 		return send_message(s, "503 Bad sequence of commands.\r\n")
 	}
 
-	var v []string = name_file_or_dir_to_rename.split("\\").collect()
+	var v []string = strings.Split(name_file_or_dir_to_rename, "\\")
 
-	var name = v.pop().unwrap()
+	var name = v[cap(v)]
 
-	var result = execute_system_command(SYSTEM_COMMAND_RENAME, &name_file_or_dir_for_rename, name)
+	var result = execute_system_command(SYSTEM_COMMAND_RENAME, *name_file_or_dir_for_rename, name)
 
-	name_file_or_dir_for_rename.clear()
+	*name_file_or_dir_for_rename = ""
 
 	if result != 0 {
 		return send_message(s, "503 Bad sequence of commands.\r\n")
@@ -1055,27 +1081,26 @@ func command_rename_to(s TcpStream, receive_buffer []byte, name_file_or_dir_for_
 
 // Client sent MFMT command, returns false if connection ended.
 func command_mfmt(s TcpStream, receive_buffer []byte) bool {
-	var tmp_vec []byte
+	/*    var mdya string
 
-	remove_command(receive_buffer, tmp_vec, 4)
+	      remove_command(receive_buffer, &mdya, 4)
 
-	var mdya = string(tmp_vec)
+	      var v []string = strings.Split(mdya, " ")
 
-	var v []string = mdya.split_whitespace().collect()
+	      var date_time_mfmt = v[0]
 
-	var date_time_mfmt = v[0]
+	      //var date_time_for_file = NaiveDateTime::parse_from_str(date_time_mfmt, "%Y%m%d%H%M%S").unwrap();
 
-	//var date_time_for_file = NaiveDateTime::parse_from_str(date_time_mfmt, "%Y%m%d%H%M%S").unwrap();
+	      var file_name = string(receive_buffer[19:])
 
-	var file_name = string(tmp_vec[15:])
+	      //var mtime = FileTime::from_unix_time(date_time_for_file.and_utc().timestamp(), 0);
 
-	//var mtime = FileTime::from_unix_time(date_time_for_file.and_utc().timestamp(), 0);
+	      var _ = set_file_mtime(file_name.clone(), mtime)
 
-	var _ = set_file_mtime(file_name.clone(), mtime)
+	      var send_buffer = fmt.Sprintf("213 Modify=%s; %s\r\n", date_time_mfmt, file_name)
 
-	var send_buffer = fmt.Sprintf("213 Modify=%s; %s\r\n", date_time_mfmt, file_name)
-
-	return send_message(s, &send_buffer)
+	      return send_message(s, send_buffer)*/
+	return true
 }
 
 // Client sent unknown command, returns false if fails.
@@ -1084,28 +1109,30 @@ func command_unknown(s TcpStream) bool {
 }
 
 // Takes a string with a 4 letter command at beginning and saves an output string with this removed.
-func remove_command(input_string, output_string []byte, skip_characters uint) {
-	var i uint
-	var length uint = len(input_string)
+func remove_command(input_string []byte, output_string *string, skip_characters uint) {
+	/*var i uint
+	  var length uint = len(input_string)
 
-	for (i + skip_characters + 1) < length {
-		output_string.push(input_string[i+skip_characters+1])
-		i += 1
-	}
+	  for (i + skip_characters + 1) < length {
+	      output_string.push(input_string[i+skip_characters+1])
+	      i += 1
+	  }
+	*/
+	*output_string = string(input_string[(skip_characters + 1):])
 }
 
 // Check is inputted string is valid email address (only requires an '@' before a '.').
-func is_email_address(address []byte) bool {
+func is_email_address(address string) bool {
 	// First character must be a-z or A-Z.
 	if !is_alphabetical(address[0]) {
 		return false
 	}
 
-	var at_index int32 = -1
-	var dot_index int32 = -1
+	var at_index int = -1
+	var dot_index int = -1
 
-	var length uint = address.len()
-	var i uint = 1
+	var length int = len(address)
+	var i int = 1
 
 	for i < length {
 		var c = address[i]
@@ -1139,23 +1166,18 @@ func is_numerical(c uint8) bool {
 func close_client_connection(s TcpStream) {
 	send_message(s, "221 FTP server closed the connection.\r\n")
 
+	s.Close()
+
 	fmt.Println("Disconnected from client.")
 }
 
 // Replace '/' to '\' for Windows
-func replace_backslash(buffer []byte) {
-	var i uint
-
-	for i < buffer.len() {
-		if '/' == buffer[i] {
-			buffer[i] = '\\'
-		}
-		i++
-	}
+func replace_backslash(buffer *string) {
+	*buffer = strings.ReplaceAll(*buffer, "/", "\\")
 }
 
 // Converting cyrillic characters between Android and Windows 7
-func simple_conv(in_string, out_string []byte, tuda_suda bool) {
+func simple_conv(in_string []byte, out_string *[]byte, tuda_suda bool) {
 	const ALL_SYMBOLS_FOR_CONVERT uint = 31 + 31 + 4 + 1
 
 	TABLE_FOR_CONVERT_TUDA := [][]byte{
@@ -1304,16 +1326,17 @@ func simple_conv(in_string, out_string []byte, tuda_suda bool) {
 
 		{0xe2, 0x84, 0x96, 0xfc}} // N
 
-	var in_len = in_string.len()
+	var in_len = len(in_string)
 
 	if is_debug() {
-		//for x in &in_string {
-		//    print!("0x{:x}, ", x);
-		//}
+		for _, x := range []byte(in_string) {
+			fmt.Printf("0x%02x, ", x)
+		}
 		fmt.Println("")
 	}
 
-	var i uint
+	var i int
+	var b byte
 
 	if tuda_suda {
 		for i < in_len {
@@ -1323,7 +1346,8 @@ func simple_conv(in_string, out_string []byte, tuda_suda bool) {
 
 				for q < ALL_SYMBOLS_FOR_CONVERT-1 {
 					if TABLE_FOR_CONVERT_TUDA[q][0] == in_string[i] && TABLE_FOR_CONVERT_TUDA[q][1] == in_string[i+1] {
-						out_string.push(TABLE_FOR_CONVERT_TUDA[q][2])
+						b = TABLE_FOR_CONVERT_TUDA[q][2]
+						*out_string = append(*out_string, b)
 						is_found = true
 						break
 					}
@@ -1340,7 +1364,8 @@ func simple_conv(in_string, out_string []byte, tuda_suda bool) {
 
 				for q < ALL_SYMBOLS_FOR_CONVERT {
 					if TABLE_FOR_CONVERT_TUDA[q][0] == in_string[i] && TABLE_FOR_CONVERT_TUDA[q][1] == in_string[i+1] && TABLE_FOR_CONVERT_TUDA[q][2] == in_string[i+2] {
-						out_string.push(TABLE_FOR_CONVERT_TUDA[q][3])
+						b = TABLE_FOR_CONVERT_TUDA[q][3]
+						*out_string = append(*out_string, b)
 						is_found = true
 						break
 					}
@@ -1352,7 +1377,7 @@ func simple_conv(in_string, out_string []byte, tuda_suda bool) {
 					i += 2
 				}
 			} else {
-				out_string.push(in_string[i])
+				*out_string = append(*out_string, byte(in_string[i]))
 			}
 
 			i += 1
@@ -1360,12 +1385,14 @@ func simple_conv(in_string, out_string []byte, tuda_suda bool) {
 	} else {
 		for i < in_len {
 			var is_found = false
-			var q = 0
+			var q uint
 
 			for q < ALL_SYMBOLS_FOR_CONVERT-1 {
 				if TABLE_FOR_CONVERT_SUDA[q][2] == in_string[i] {
-					out_string.push(TABLE_FOR_CONVERT_SUDA[q][0])
-					out_string.push(TABLE_FOR_CONVERT_SUDA[q][1])
+					b = TABLE_FOR_CONVERT_SUDA[q][0]
+					*out_string = append(*out_string, b)
+					b = TABLE_FOR_CONVERT_SUDA[q][1]
+					*out_string = append(*out_string, b)
 					is_found = true
 					break
 				}
@@ -1378,9 +1405,12 @@ func simple_conv(in_string, out_string []byte, tuda_suda bool) {
 
 				for q < ALL_SYMBOLS_FOR_CONVERT {
 					if TABLE_FOR_CONVERT_SUDA[q][3] == in_string[i] {
-						out_string.push(TABLE_FOR_CONVERT_SUDA[q][0])
-						out_string.push(TABLE_FOR_CONVERT_SUDA[q][1])
-						out_string.push(TABLE_FOR_CONVERT_SUDA[q][2])
+						b = TABLE_FOR_CONVERT_SUDA[q][0]
+						*out_string = append(*out_string, b)
+						b = TABLE_FOR_CONVERT_SUDA[q][1]
+						*out_string = append(*out_string, b)
+						b = TABLE_FOR_CONVERT_SUDA[q][2]
+						*out_string = append(*out_string, b)
 						is_found2 = true
 						break
 					}
@@ -1388,7 +1418,7 @@ func simple_conv(in_string, out_string []byte, tuda_suda bool) {
 				}
 
 				if !is_found2 {
-					out_string.push(in_string[i])
+					*out_string = append(*out_string, byte(in_string[i]))
 				}
 			}
 
@@ -1397,9 +1427,9 @@ func simple_conv(in_string, out_string []byte, tuda_suda bool) {
 	}
 
 	if is_debug() {
-		//for x in out_string {
-		//    print!("0x{:x}, ", x);
-		//}
+		for _, x := range []byte(in_string) {
+			fmt.Printf("0x%02x, ", x)
+		}
 		fmt.Println("")
 	}
 }
