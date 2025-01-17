@@ -66,23 +66,19 @@ func main() {
 	var port = get_server_address_info()
 
 	listener, err := net.Listen("tcp4", port)
-
 	if err != nil {
 		log.Fatalln(err)
 	}
-
 	defer listener.Close()
 
 	show_server_info()
 
 	for {
 		conn, err := listener.Accept()
-
 		if err != nil {
 			log.Fatalln(err)
 			conn.Close()
 		}
-
 		go handle_clients(conn)
 	}
 }
@@ -102,7 +98,6 @@ func debug_mode() bool {
 			return true
 		}
 	}
-
 	return false
 }
 
@@ -121,7 +116,6 @@ func convert_cyrillic() bool {
 			return true
 		}
 	}
-
 	return false
 }
 
@@ -173,12 +167,12 @@ func handle_clients(s TcpStream) {
 
 func get_client_port(s TcpStream) int {
 	tmp := strings.Split(s.RemoteAddr().String(), ":")[1]
-	value, err := strconv.ParseInt(tmp, 10, 64)
+	value, err := strconv.Atoi(tmp)
 	if err != nil {
 		log.Println(err)
 		return 0
 	}
-	return int(value)
+	return value
 }
 
 // Takes incoming connection and assigns new socket.
@@ -196,33 +190,30 @@ func communicate_with_client(s TcpStream, connect_to *string, authroised_login *
 	var user_name string
 	var password string
 
-	receipt_successful := receive_message(s, &receive_buffer)
-	if !receipt_successful {
+	if receipt_successful := receive_message(s, &receive_buffer); !receipt_successful {
 		return receipt_successful
 	}
 
 	var success bool
+
+	if len(receive_buffer) < 4 {
+		return command_unknown(s)
+	}
 
 	maybe_command := string(receive_buffer[:4])
 
 	switch maybe_command {
 	case "USER":
 		{
-			var i_attempts = 0
+			i_attempts := 0
 
-			for {
-				success = command_user_name(s, receive_buffer, user_name, authroised_login)
-
-				if !success {
+			for !success && i_attempts < 4 {
+				if success = command_user_name(s, receive_buffer, user_name, authroised_login); !success {
 					i_attempts++
 
-					receipt_successful = receive_message(s, &receive_buffer)
-					if !receipt_successful {
+					if receipt_successful := receive_message(s, &receive_buffer); !receipt_successful {
 						return receipt_successful
 					}
-				}
-				if success || i_attempts >= 3 {
-					break
 				}
 			}
 			return success
@@ -237,11 +228,11 @@ func communicate_with_client(s TcpStream, connect_to *string, authroised_login *
 	case "PORT":
 		success = command_port(s, connect_to, receive_buffer)
 	case "LIST", "NLST":
-		success = command_list(s, *connect_to, client_id, *current_directory)
+		success = command_list(s, connect_to, client_id, *current_directory)
 	case "RETR":
-		success = command_retrieve(s, *connect_to, receive_buffer, *current_directory)
+		success = command_retrieve(s, connect_to, receive_buffer, *current_directory)
 	case "STOR":
-		success = command_store(s, *connect_to, receive_buffer, *current_directory)
+		success = command_store(s, connect_to, receive_buffer, *current_directory)
 	case "CWD ":
 		success = command_change_working_directory(s, receive_buffer, current_directory)
 	case "DELE":
@@ -272,20 +263,19 @@ func communicate_with_client(s TcpStream, connect_to *string, authroised_login *
 // Receives message and saves it in receive buffer, returns false if connection ended.
 func receive_message(s TcpStream, receive_buffer *[]byte) bool {
 	var recv_bytes int
-	var buffer_for_read = make([]byte, 1)
+	buffer_for_read := make([]byte, 1)
 	var err error
 
 	*receive_buffer = make([]byte, 0)
 
 	for {
 		if recv_bytes, err = s.Read(buffer_for_read); err == io.EOF {
-			break
+			return false
 		}
 
 		if recv_bytes == 0 || err != nil {
 			log.Println("Read error:", err)
-			recv_bytes = 0
-			break
+			return false
 		}
 
 		if buffer_for_read[0] == '\n' {
@@ -295,10 +285,6 @@ func receive_message(s TcpStream, receive_buffer *[]byte) bool {
 		}
 
 		*receive_buffer = append(*receive_buffer, buffer_for_read[:1]...)
-	}
-
-	if recv_bytes == 0 {
-		return false
 	}
 
 	if is_debug() {
@@ -320,11 +306,11 @@ func command_user_name(s TcpStream, receive_buffer []byte, user_name string, aut
 		log.Println("User name valid. Password required.")
 
 		return send_message(s, "331 Authorised login requested, please specify the password.\r\n")
-	} else {
-		log.Println("User name unauthorised. Public access only.")
-
-		return send_message(s, "331 Public login requested, please specify email as password.\r\n")
 	}
+
+	log.Println("User name unauthorised. Public access only.")
+
+	return send_message(s, "331 Public login requested, please specify email as password.\r\n")
 }
 
 // Send message to client, returns true if message was sended.
@@ -375,9 +361,9 @@ func command_password(s TcpStream, receive_buffer []byte, password string, authr
 func is_valid_password(password string, authroised_login *bool) bool {
 	if *authroised_login {
 		return password == "334"
-	} else {
-		return is_email_address(password)
 	}
+
+	return is_email_address(password)
 }
 
 // Client sent SYST command, returns false if fails.
@@ -403,9 +389,9 @@ func command_port(s TcpStream, connect_to *string, receive_buffer []byte) bool {
 
 	if len(*connect_to) == 0 {
 		return send_argument_syntax_error(s)
-	} else {
-		return send_message(s, "200 PORT Command successful.\r\n")
 	}
+
+	return send_message(s, "200 PORT Command successful.\r\n")
 }
 
 // Gets the client's IP and port number for active connection.
@@ -416,32 +402,26 @@ func get_client_ip_and_port(receive_buffer []byte) string {
 		return ""
 	}
 
-	var active_ip []string = parts[:4]
+	active_ip := parts[:4]
+	active_port := make([]int, 2)
 
-	var active_port []int = make([]int, 2)
-
-	var value int64
 	var err error
 
-	value, err = strconv.ParseInt(parts[4], 10, 64)
-	if err != nil {
+	if active_port[0], err = strconv.Atoi(parts[4]); err != nil {
 		log.Println(err)
 		return ""
 	}
-	active_port[0] = int(value)
 
-	value, err = strconv.ParseInt(parts[5], 10, 64)
-	if err != nil {
+	if active_port[1], err = strconv.Atoi(parts[5]); err != nil {
 		log.Println(err)
 		return ""
 	}
-	active_port[1] = int(value)
 
-	var ip_buffer = fmt.Sprintf("%s.%s.%s.%s", active_ip[0], active_ip[1], active_ip[2], active_ip[3])
+	ip_buffer := fmt.Sprintf("%s.%s.%s.%s", active_ip[0], active_ip[1], active_ip[2], active_ip[3])
 	log.Printf("\tClient's IP is %s\n", ip_buffer)
 
-	var port_decimal int = active_port[0]<<8 | active_port[1]
-	var port_buffer = strconv.Itoa(port_decimal)
+	port_decimal := active_port[0]<<8 | active_port[1]
+	port_buffer := strconv.Itoa(port_decimal)
 	log.Printf("\tClient's Port is %s\n", port_buffer)
 
 	return ip_buffer + ":" + port_buffer
@@ -457,11 +437,11 @@ func send_failed_active_connection(s TcpStream) bool {
 }
 
 // Client sent LIST command, returns false if fails.
-func command_list(s TcpStream, connect_to string, client_id int, current_directory string) bool {
+func command_list(s TcpStream, connect_to *string, client_id int, current_directory string) bool {
 	var tmp = fmt.Sprintf("%s\\%d_tmp_dir.txt", get_temp_directory(), client_id)
 
 	if send_file(s, connect_to, tmp, client_id, current_directory) != 1 {
-		return false
+		return send_message(s, "426 Connection closed; transfer aborted.\r\n")
 	}
 
 	return send_message(s, "226 Directory send OK.\r\n")
@@ -478,7 +458,7 @@ func delete_temp_files(file1, file2, file3 string) {
 }
 
 // Sends specified file to client, return '1' if not have error.
-func send_file(s TcpStream, connect_to string, file_name string, client_id int, current_directory string) int {
+func send_file(s TcpStream, connect_to *string, file_name string, client_id int, current_directory string) int {
 	var tmp string
 	var tmp_directory string
 	var tmp_file string
@@ -488,9 +468,9 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 	if client_id > 0 {
 		log.Println("Client has requested the directory listing.")
 
-		year := int64(time.Now().Year())
+		year := time.Now().Year()
 
-		var path_temp = get_temp_directory()
+		path_temp := get_temp_directory()
 
 		tmp = fmt.Sprintf("%s\\%d_tmp_dir.txt", path_temp, client_id)
 		tmp_directory = fmt.Sprintf("%s\\%d_tmp_dir2.txt", path_temp, client_id)
@@ -511,14 +491,14 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 			log.Panicln(err)
 			return 0
 		}
+		defer f_dir.Close()
 
 		f_directory, err := os.Open(tmp_directory)
 		if err != nil {
 			log.Panicln(err)
-			f_dir.Close()
-			f_directory.Close()
 			return 0
 		}
+		defer f_directory.Close()
 
 		var is_first = true
 
@@ -563,17 +543,14 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 			}
 		}
 
-		f_directory.Close()
-
 		buffer = buffer[:0]
 
-		var f_files *os.File
-		if f_files, err = os.Open(tmp_file); err != nil {
+		f_files, err := os.Open(tmp_file)
+		if err != nil {
 			log.Panicln(err)
-			f_dir.Close()
-			f_files.Close()
 			return 0
 		}
+		defer f_files.Close()
 
 		var skip_lines = 5
 		var tmp_file_name string
@@ -587,7 +564,7 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 				log.Println(err)
 				break
 			}
-			var b byte = buffer_for_read[0]
+			b := buffer_for_read[0]
 			if b == '\r' {
 				continue
 			} else if b == '\n' {
@@ -598,32 +575,31 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 				}
 
 				if is_numerical(buffer[0]) {
-					var line = string(buffer[0:36])
+					line := string(buffer[0:36])
 
-					var line_for_split string = line
+					line_for_split := line
 					for strings.Contains(line_for_split, "  ") {
 						line_for_split = strings.ReplaceAll(line_for_split, "  ", " ")
 					}
 
-					var v []string = strings.Split(line_for_split, " ")
-					var tmp_date = []byte(v[0])
+					v := strings.Split(line_for_split, " ")
 
-					var i_day, i_month, i_year int64
-					i_day, err = strconv.ParseInt(string(tmp_date[0:2]), 10, 8)
-					i_month, err = strconv.ParseInt(string(tmp_date[3:5]), 10, 8)
-					i_year, err = strconv.ParseInt(string(tmp_date[6:10]), 10, 64)
+					tmp_date := []byte(v[0])
+
+					i_day, _ := strconv.Atoi(string(tmp_date[0:2]))
+					i_month, _ := strconv.Atoi(string(tmp_date[3:5]))
+					i_year, _ := strconv.Atoi(string(tmp_date[6:10]))
 
 					var tmp_time = []byte(v[1])
-					var i_hour, i_minute int64
-					i_hour, err = strconv.ParseInt(string(tmp_time[0:2]), 10, 8)
-					i_minute, err = strconv.ParseInt(string(tmp_time[3:5]), 10, 8)
+
+					i_hour, _ := strconv.Atoi(string(tmp_time[0:2]))
+					i_minute, _ := strconv.Atoi(string(tmp_time[3:5]))
 
 					var tmp_file_size = v[2]
 
-					var file_size int64
-					file_size, err = strconv.ParseInt(tmp_file_size, 10, 64)
+					file_size, _ := strconv.Atoi(tmp_file_size)
 
-					var tmp_file_name_vec []byte = buffer[36:]
+					tmp_file_name_vec := buffer[36:]
 
 					if year == i_year {
 						tmp_buffer_file = fmt.Sprintf("-rw-rw-rw-    1 user       group %10d %s %02d %02d:%02d ", file_size, MONTHS[i_month-1], i_day, i_hour, i_minute)
@@ -656,9 +632,6 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 		}
 
 		f_dir.Write([]byte("\n"))
-
-		f_files.Close()
-		f_dir.Close()
 	} else {
 		log.Printf("Client has requested to retrieve the file: \"%s\".\n", file_name)
 	}
@@ -677,30 +650,26 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 		file_name_for_open += file_name
 	}
 
-	var f_in, err = os.OpenFile(file_name_for_open, os.O_RDONLY, 0666)
-	defer f_in.Close()
+	f_in, err := os.OpenFile(file_name_for_open, os.O_RDONLY, 0666)
 	if err != nil {
 		log.Println("Error:", err)
-
 		if !send_message(s, "550 File name invalid.\r\n") {
 			return 0
 		}
-
 		return -1
-	} else {
-		if !send_message(s, "150 Data connection ready.\r\n") {
-			if client_id > 0 {
-				if !is_debug() {
-					delete_temp_files(tmp, tmp_directory, tmp_file)
-				}
-			}
+	}
+	defer f_in.Close()
 
-			return 0
+	if !send_message(s, "150 Data connection ready.\r\n") {
+		if client_id > 0 {
+			if !is_debug() {
+				delete_temp_files(tmp, tmp_directory, tmp_file)
+			}
 		}
+		return 0
 	}
 
-	send_to, err := net.Dial("tcp4", connect_to)
-	defer send_to.Close()
+	send_to, err := net.Dial("tcp4", *connect_to)
 	if err != nil {
 		log.Println(err)
 		if client_id > 0 {
@@ -710,8 +679,9 @@ func send_file(s TcpStream, connect_to string, file_name string, client_id int, 
 		}
 		return 0
 	}
+	defer send_to.Close()
 
-	var temp_buffer []byte = make([]byte, BIG_BUFFER_SIZE)
+	temp_buffer := make([]byte, BIG_BUFFER_SIZE)
 	var read_bytes int
 
 	for {
@@ -757,65 +727,65 @@ func execute_system_command(args ...string) int {
 		log.Printf("Execute command: %s\n", args)
 	}
 
-	var cmd_args []string = make([]string, 1)
-	cmd_args[0] = "/C"
+	cmd_args := []string{"/C"}
+
 	for _, arg := range args {
 		cmd_args = append(cmd_args, arg)
 	}
-	if err := exec.Command("cmd", cmd_args...).Run(); err != nil {
+
+	cmd := exec.Command("cmd", cmd_args...)
+
+	if err := cmd.Run(); err != nil {
 		log.Println("Error:", err)
+		return cmd.ProcessState.ExitCode()
 	}
 
 	return 0
 }
 
 // Client sent RETR command, returns false if fails.
-func command_retrieve(s TcpStream, connect_to string, receive_buffer []byte, current_directory string) bool {
+func command_retrieve(s TcpStream, connect_to *string, receive_buffer []byte, current_directory string) bool {
 	var tmp string
 
 	remove_command(receive_buffer, &tmp, 4)
 
-	var result = send_file(s, connect_to, tmp, 0, current_directory)
-
-	if result == 1 {
-		return false
+	if send_file(s, connect_to, tmp, 0, current_directory) != 1 {
+		return send_message(s, "426 Connection closed; transfer aborted.\r\n")
 	}
 
 	return send_message(s, "226 File transfer complete.\r\n")
 }
 
 // Client sent STORE command, returns false if fails.
-func command_store(s TcpStream, connect_to string, receive_buffer []byte, current_directory string) bool {
+func command_store(s TcpStream, connect_to *string, receive_buffer []byte, current_directory string) bool {
 	var tmp string
 
 	remove_command(receive_buffer, &tmp, 4)
 
-	var result = save_file(s, connect_to, tmp, current_directory)
-
-	if !result {
-		return result
+	if !save_file(s, connect_to, tmp, current_directory) {
+		return send_message(s, "426 Connection closed; transfer aborted.\r\n")
 	}
 
 	return send_message(s, "226 File transfer complete.\r\n")
 }
 
 // Sends specified file to client.
-func save_file(s TcpStream, connect_to, file_name, current_directory string) bool {
+func save_file(s TcpStream, connect_to *string, file_name, current_directory string) bool {
 	log.Printf("Client has requested to store the file: \"%s\".\n", file_name)
 
-	recv_from, err := net.Dial("tcp4", connect_to)
-	defer recv_from.Close()
+	recv_from, err := net.Dial("tcp4", *connect_to)
 	if err != nil {
 		log.Println(err)
 		send_failed_active_connection(s)
 		return false
 	}
+	defer recv_from.Close()
 
 	if !send_message(s, "150 Data connection ready.\r\n") {
 		return false
 	}
 
-	var file_name_full = current_directory
+	file_name_full := current_directory
 
 	if len(file_name_full) > 0 {
 		file_name_full += "\\"
@@ -823,15 +793,14 @@ func save_file(s TcpStream, connect_to, file_name, current_directory string) boo
 
 	file_name_full += file_name
 
-	var f_out_file *os.File
-	f_out_file, err = os.Create(file_name_full)
-	defer f_out_file.Close()
+	f_out_file, err := os.Create(file_name_full)
 	if err != nil {
 		log.Println(err)
 		return false
 	}
+	defer f_out_file.Close()
 
-	var temp_buffer []byte = make([]byte, BIG_BUFFER_SIZE)
+	temp_buffer := make([]byte, BIG_BUFFER_SIZE)
 	var recv_bytes int
 
 	for {
@@ -935,9 +904,9 @@ func command_opts(s TcpStream, receive_buffer []byte) bool {
 
 	if opts_name == "UTF8 ON" {
 		return send_message(s, "200 UTF8 ON.\r\n")
-	} else {
-		return send_argument_syntax_error(s)
 	}
+
+	return send_argument_syntax_error(s)
 }
 
 // Client sent RNFR command, returns false if connection ended.
@@ -961,7 +930,7 @@ func command_rename_to(s TcpStream, receive_buffer []byte, name_file_or_dir_for_
 
 	replace_backslash(&tmp)
 
-	var name_file_or_dir_to_rename = tmp
+	name_file_or_dir_to_rename := tmp
 
 	if 0 == len(*name_file_or_dir_for_rename) || 0 == len(name_file_or_dir_to_rename) {
 		*name_file_or_dir_for_rename = ""
@@ -969,19 +938,17 @@ func command_rename_to(s TcpStream, receive_buffer []byte, name_file_or_dir_for_
 		return send_message(s, "503 Bad sequence of commands.\r\n")
 	}
 
-	var v []string = strings.Split(name_file_or_dir_to_rename, "\\")
+	v := strings.Split(name_file_or_dir_to_rename, "\\")
 
-	var name = v[cap(v)]
-
-	var result = execute_system_command(SYSTEM_COMMAND_RENAME, *name_file_or_dir_for_rename, name)
+	result := execute_system_command(SYSTEM_COMMAND_RENAME, *name_file_or_dir_for_rename, v[cap(v)])
 
 	*name_file_or_dir_for_rename = ""
 
 	if result != 0 {
 		return send_message(s, "503 Bad sequence of commands.\r\n")
-	} else {
-		return send_message(s, "250 Requested file action okay, file renamed.\r\n")
 	}
+
+	return send_message(s, "250 Requested file action okay, file renamed.\r\n")
 }
 
 // Client sent MFMT command, returns false if connection ended.
@@ -990,9 +957,9 @@ func command_mfmt(s TcpStream, receive_buffer []byte) bool {
 
 	remove_command(receive_buffer, &mdya, 4)
 
-	var v []string = strings.Split(mdya, " ")
+	v := strings.Split(mdya, " ")
 
-	var date_time_mfmt = v[0]
+	date_time_mfmt := v[0]
 
 	year, _ := strconv.Atoi(string(date_time_mfmt[0:4]))
 	month, _ := strconv.Atoi(string(date_time_mfmt[4:6]))
@@ -1001,12 +968,12 @@ func command_mfmt(s TcpStream, receive_buffer []byte) bool {
 	minute, _ := strconv.Atoi(string(date_time_mfmt[10:12]))
 	seconds, _ := strconv.Atoi(string(date_time_mfmt[12:14]))
 	mtime := time.Date(year, time.Month(month), day, hour, minute, seconds, 0, time.UTC)
-	atime := mtime
 
 	var file_name = string(receive_buffer[21:])
 
-	if err := os.Chtimes(file_name, atime, mtime); err != nil {
+	if err := os.Chtimes(file_name, mtime, mtime); err != nil {
 		log.Println(file_name, err)
+
 		return send_argument_syntax_error(s)
 	}
 
@@ -1048,6 +1015,7 @@ func is_email_address(address string) bool {
 				return false
 			}
 		}
+
 		i++
 	}
 
@@ -1246,11 +1214,11 @@ func simple_conv(in_string []byte, out_string *[]byte, tuda_suda bool) {
 						break
 					}
 
-					q += 1
+					q++
 				}
 
 				if is_found {
-					i += 1
+					i++
 				}
 			} else if '\xe2' == in_string[i] {
 				var is_found = false
@@ -1264,7 +1232,7 @@ func simple_conv(in_string []byte, out_string *[]byte, tuda_suda bool) {
 						break
 					}
 
-					q += 1
+					q++
 				}
 
 				if is_found {
@@ -1274,7 +1242,7 @@ func simple_conv(in_string []byte, out_string *[]byte, tuda_suda bool) {
 				*out_string = append(*out_string, byte(in_string[i]))
 			}
 
-			i += 1
+			i++
 		}
 	} else {
 		for i < in_len {
@@ -1290,7 +1258,7 @@ func simple_conv(in_string []byte, out_string *[]byte, tuda_suda bool) {
 					is_found = true
 					break
 				}
-				q += 1
+				q++
 			}
 
 			if !is_found {
@@ -1308,7 +1276,7 @@ func simple_conv(in_string []byte, out_string *[]byte, tuda_suda bool) {
 						is_found2 = true
 						break
 					}
-					q += 1
+					q++
 				}
 
 				if !is_found2 {
@@ -1316,7 +1284,7 @@ func simple_conv(in_string []byte, out_string *[]byte, tuda_suda bool) {
 				}
 			}
 
-			i += 1
+			i++
 		}
 	}
 
