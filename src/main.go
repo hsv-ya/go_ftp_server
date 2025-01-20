@@ -10,8 +10,7 @@
  *
  * Only IP4
  *
- * The ftp LIST command is fully implemented, in a very naive way using
- * redirection and a temporary file.
+ * The ftp LIST command is fully implemented.
  */
 package main
 
@@ -27,17 +26,12 @@ import (
 	"time"
 )
 
-var MONTHS = [...]string{
-	"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-	"Jul", "Aug", "Sep", "Oct", "Nov", "Dec"}
-
 const SYSTEM_COMMAND_DEL = "del"
 const SYSTEM_COMMAND_MKDIR = "mkdir"
 const SYSTEM_COMMAND_RMDIR = "rmdir"
 const SYSTEM_COMMAND_RENAME = "rename"
 
 var SHOW_DEBUG_MESSAGE bool
-var CONVERT_CYRILLIC bool
 
 const DEFAULT_PORT = 21
 const BIG_BUFFER_SIZE uint = 65535
@@ -49,11 +43,8 @@ type TcpStream = net.Conn
 //	0:  Program name
 //	1:  Port number
 //	2:  Debug mode (true/false)
-//	3:  Use convert cyrillic file and directory name between Android and Windows 7 (true/false)
 func main() {
 	set_debug(debug_mode())
-
-	set_convert_cyrillic(convert_cyrillic())
 
 	var env_temp = get_temp_directory()
 
@@ -95,24 +86,6 @@ func is_debug() bool {
 func debug_mode() bool {
 	if len(os.Args) > 2 {
 		if os.Args[2] == "true" {
-			return true
-		}
-	}
-	return false
-}
-
-func set_convert_cyrillic(b bool) {
-	CONVERT_CYRILLIC = b
-}
-
-func is_convert_cyrillic() bool {
-	return CONVERT_CYRILLIC
-}
-
-// Returns true if user indicated that convert cyrillic should be on.
-func convert_cyrillic() bool {
-	if len(os.Args) > 3 {
-		if os.Args[3] == "true" {
 			return true
 		}
 	}
@@ -284,7 +257,7 @@ func receive_message(s TcpStream, receive_buffer *[]byte) bool {
 			continue
 		}
 
-		*receive_buffer = append(*receive_buffer, buffer_for_read[:1]...)
+		*receive_buffer = append(*receive_buffer, buffer_for_read[0])
 	}
 
 	if is_debug() {
@@ -447,23 +420,9 @@ func command_list(s TcpStream, connect_to *string, client_id int, current_direct
 	return send_message(s, "226 Directory send OK.\r\n")
 }
 
-func get_temp_directory() string {
-	return os.Getenv("TEMP")
-}
-
-func delete_temp_files(file1, file2, file3 string) {
-	execute_system_command(SYSTEM_COMMAND_DEL, file1)
-	execute_system_command(SYSTEM_COMMAND_DEL, file2)
-	execute_system_command(SYSTEM_COMMAND_DEL, file3)
-}
-
 // Sends specified file to client, return '1' if not have error.
 func send_file(s TcpStream, connect_to *string, file_name string, client_id int, current_directory string) int {
 	var tmp string
-	var tmp_directory string
-	var tmp_file string
-	var tmp_dir_directory = "dir /A:D /B"
-	var tmp_dir_files = "dir /A:-D /-C"
 
 	if client_id > 0 {
 		log.Println("Client has requested the directory listing.")
@@ -473,18 +432,6 @@ func send_file(s TcpStream, connect_to *string, file_name string, client_id int,
 		path_temp := get_temp_directory()
 
 		tmp = fmt.Sprintf("%s\\%d_tmp_dir.txt", path_temp, client_id)
-		tmp_directory = fmt.Sprintf("%s\\%d_tmp_dir2.txt", path_temp, client_id)
-		tmp_file = fmt.Sprintf("%s\\%d_tmp_dir3.txt", path_temp, client_id)
-
-		tmp_dir_directory += " >"
-		tmp_dir_directory += tmp_directory
-
-		tmp_dir_files += " >"
-		tmp_dir_files += tmp_file
-
-		execute_system_command(tmp_dir_files, current_directory)
-
-		execute_system_command(tmp_dir_directory, current_directory)
 
 		f_dir, err := os.Create(tmp)
 		if err != nil {
@@ -493,145 +440,43 @@ func send_file(s TcpStream, connect_to *string, file_name string, client_id int,
 		}
 		defer f_dir.Close()
 
-		f_directory, err := os.Open(tmp_directory)
+		tmp_dir := current_directory
+		if current_directory == "" {
+			tmp_dir = "."
+		}
+
+		lists, err := os.ReadDir(tmp_dir)
 		if err != nil {
 			log.Panicln(err)
 			return 0
 		}
-		defer f_directory.Close()
 
-		var is_first = true
-
-		var buffer []byte
-		var buffer_for_read = make([]byte, 1)
-		var n int
-
-		for {
-			if n, err = f_directory.Read(buffer_for_read); err == io.EOF {
-				break
-			}
-			if n != 1 || err != nil {
-				log.Println(err)
-				break
-			}
-			var b byte = buffer_for_read[0]
-			if b == '\r' {
-				continue
-			} else if b == '\n' {
-				var tmp_buffer_dir = "drw-rw-rw-    1 user       group        512 Oct 15  2024 "
-				if !is_convert_cyrillic() {
-					var line = string(buffer)
-					tmp_buffer_dir += line
-				} else {
-					var tmp_new_file_name []byte
-					simple_conv(buffer, &tmp_new_file_name, false)
-					var str_tmp_new_file_name = string(tmp_new_file_name)
-					tmp_buffer_dir += str_tmp_new_file_name
-				}
-				if !is_first {
-					f_dir.Write([]byte("\n"))
-				} else {
-					is_first = false
-				}
-				f_dir.Write([]byte(tmp_buffer_dir))
-				if is_debug() {
-					log.Println(tmp_buffer_dir)
-				}
-				buffer = buffer[:0]
+		for _, item := range lists {
+			if item.IsDir() {
+				f_dir.WriteString("drw-rw-rw-    1 user       group        512 Oct 15  2024 " + item.Name() + "\n")
 			} else {
-				buffer = append(buffer, b)
-			}
-		}
-
-		buffer = buffer[:0]
-
-		f_files, err := os.Open(tmp_file)
-		if err != nil {
-			log.Panicln(err)
-			return 0
-		}
-		defer f_files.Close()
-
-		var skip_lines = 5
-		var tmp_file_name string
-		var tmp_buffer_file string
-
-		for {
-			if n, err = f_files.Read(buffer_for_read); err == io.EOF {
-				break
-			}
-			if n != 1 || err != nil {
-				log.Println(err)
-				break
-			}
-			b := buffer_for_read[0]
-			if b == '\r' {
-				continue
-			} else if b == '\n' {
-				if skip_lines > 0 {
-					skip_lines -= 1
-					buffer = buffer[:0]
+				itemInfo, err := item.Info()
+				if err != nil {
+					log.Panicln(err)
 					continue
 				}
-
-				if is_numerical(buffer[0]) {
-					line := string(buffer[0:36])
-
-					line_for_split := line
-					for strings.Contains(line_for_split, "  ") {
-						line_for_split = strings.ReplaceAll(line_for_split, "  ", " ")
-					}
-
-					v := strings.Split(line_for_split, " ")
-
-					tmp_date := []byte(v[0])
-
-					i_day, _ := strconv.Atoi(string(tmp_date[0:2]))
-					i_month, _ := strconv.Atoi(string(tmp_date[3:5]))
-					i_year, _ := strconv.Atoi(string(tmp_date[6:10]))
-
-					var tmp_time = []byte(v[1])
-
-					i_hour, _ := strconv.Atoi(string(tmp_time[0:2]))
-					i_minute, _ := strconv.Atoi(string(tmp_time[3:5]))
-
-					var tmp_file_size = v[2]
-
-					file_size, _ := strconv.Atoi(tmp_file_size)
-
-					tmp_file_name_vec := buffer[36:]
-
-					if year == i_year {
-						tmp_buffer_file = fmt.Sprintf("-rw-rw-rw-    1 user       group %10d %s %02d %02d:%02d ", file_size, MONTHS[i_month-1], i_day, i_hour, i_minute)
-					} else {
-						tmp_buffer_file = fmt.Sprintf("-rw-rw-rw-    1 user       group %10d %s %02d  %04d ", file_size, MONTHS[i_month-1], i_day, i_year)
-					}
-					if !is_convert_cyrillic() {
-						tmp_file_name = string(buffer[36:])
-						tmp_buffer_file += tmp_file_name
-					} else {
-						var tmp_new_file_name_vec []byte
-						simple_conv(tmp_file_name_vec, &tmp_new_file_name_vec, false)
-						var tmp_new_file_name = string(tmp_new_file_name_vec)
-						tmp_buffer_file += tmp_new_file_name
-					}
-					if !is_first {
-						f_dir.Write([]byte("\n"))
-					} else {
-						is_first = false
-					}
-					f_dir.Write([]byte(tmp_buffer_file))
-					if is_debug() {
-						log.Println(tmp_buffer_file)
-					}
+				file_size := itemInfo.Size()
+				utc := itemInfo.ModTime()
+				i_day := utc.Day()
+				s_month := utc.Month().String()[0:3]
+				i_year := utc.Year()
+				i_hour := utc.Hour()
+				i_minute := utc.Minute()
+				var tmp_buffer_file string
+				if year == i_year {
+					tmp_buffer_file = fmt.Sprintf("-rw-rw-rw-    1 user       group %10d %s %02d %02d:%02d ", file_size, s_month, i_day, i_hour, i_minute)
+				} else {
+					tmp_buffer_file = fmt.Sprintf("-rw-rw-rw-    1 user       group %10d %s %02d  %04d ", file_size, s_month, i_day, i_year)
 				}
-				buffer = buffer[:0]
-			} else {
-				buffer = append(buffer, b)
+				tmp_buffer_file += item.Name()
+				f_dir.WriteString(tmp_buffer_file + "\n")
 			}
 		}
-
-		f_dir.Write([]byte("\n"))
 	} else {
 		log.Printf("Client has requested to retrieve the file: \"%s\".\n", file_name)
 	}
@@ -663,7 +508,7 @@ func send_file(s TcpStream, connect_to *string, file_name string, client_id int,
 	if !send_message(s, "150 Data connection ready.\r\n") {
 		if client_id > 0 {
 			if !is_debug() {
-				delete_temp_files(tmp, tmp_directory, tmp_file)
+				delete_temp_files(tmp)
 			}
 		}
 		return 0
@@ -674,7 +519,7 @@ func send_file(s TcpStream, connect_to *string, file_name string, client_id int,
 		log.Println(err)
 		if client_id > 0 {
 			if !is_debug() {
-				delete_temp_files(tmp, tmp_directory, tmp_file)
+				delete_temp_files(tmp)
 			}
 		}
 		return 0
@@ -703,7 +548,7 @@ func send_file(s TcpStream, connect_to *string, file_name string, client_id int,
 		if send_bytes != read_bytes {
 			if client_id > 0 {
 				if !is_debug() {
-					delete_temp_files(tmp, tmp_directory, tmp_file)
+					delete_temp_files(tmp)
 				}
 			}
 			return 0
@@ -712,13 +557,21 @@ func send_file(s TcpStream, connect_to *string, file_name string, client_id int,
 
 	if client_id > 0 {
 		if !is_debug() {
-			delete_temp_files(tmp, tmp_directory, tmp_file)
+			delete_temp_files(tmp)
 		}
 	}
 
 	log.Println("File sent successfully.")
 
 	return 1
+}
+
+func get_temp_directory() string {
+	return os.Getenv("TEMP")
+}
+
+func delete_temp_files(file1 string) {
+	execute_system_command(SYSTEM_COMMAND_DEL, file1)
 }
 
 // return '0' if not have error.
@@ -1044,263 +897,4 @@ func close_client_connection(s TcpStream) {
 // Replace '/' to '\' for Windows
 func replace_backslash(buffer *string) {
 	*buffer = strings.ReplaceAll(*buffer, "/", "\\")
-}
-
-// Converting cyrillic characters between Android and Windows 7
-func simple_conv(in_string []byte, out_string *[]byte, tuda_suda bool) {
-	const ALL_SYMBOLS_FOR_CONVERT uint = 31 + 31 + 4 + 1
-
-	TABLE_FOR_CONVERT_TUDA := [][]byte{
-		// small
-		{0xd0, 0xb9, 0xE9, 0},
-		{0xd1, 0x86, 0xF6, 0},
-		{0xd1, 0x83, 0xF3, 0},
-		{0xd0, 0xba, 0xEA, 0},
-		{0xd0, 0xb5, 0xE5, 0},
-		{0xd0, 0xbd, 0xED, 0},
-		{0xd0, 0xb3, 0xE3, 0},
-		{0xd1, 0x88, 0xF8, 0},
-		{0xd1, 0x89, 0xF9, 0},
-		{0xd0, 0xb7, 0xE7, 0},
-		{0xd1, 0x85, 0xF5, 0},
-		{0xd1, 0x84, 0xF4, 0},
-		{0xd1, 0x8b, 0xFB, 0},
-		{0xd0, 0xb2, 0xE2, 0},
-		{0xd0, 0xb0, 0xE0, 0},
-		{0xd0, 0xbf, 0xEF, 0},
-		{0xd1, 0x80, 0xF0, 0},
-		{0xd0, 0xbe, 0xEE, 0},
-		{0xd0, 0xbb, 0xEB, 0},
-		{0xd0, 0xb4, 0xE4, 0},
-		{0xd0, 0xb6, 0xE6, 0},
-		{0xd1, 0x8d, 0xFD, 0},
-		{0xd1, 0x8f, 0xFF, 0},
-		{0xd1, 0x87, 0xF7, 0},
-		{0xd1, 0x81, 0xF1, 0},
-		{0xd0, 0xbc, 0xEC, 0},
-		{0xd0, 0xb8, 0xE8, 0},
-		{0xd1, 0x82, 0xF2, 0},
-		{0xd1, 0x8c, 0xFC, 0},
-		{0xd0, 0xb1, 0xE1, 0},
-		{0xd1, 0x8e, 0xFE, 0},
-		// big
-		{0xd0, 0x99, 0xC9, 0},
-		{0xd0, 0xa6, 0xD6, 0},
-		{0xd0, 0xa3, 0xD3, 0},
-		{0xd0, 0x9a, 0xCA, 0},
-		{0xd0, 0x95, 0xC5, 0},
-		{0xd0, 0x9d, 0xCD, 0},
-		{0xd0, 0x93, 0xC3, 0},
-		{0xd0, 0xa8, 0xD8, 0},
-		{0xd0, 0xa9, 0xD9, 0},
-		{0xd0, 0x97, 0xC7, 0},
-		{0xd0, 0xa5, 0xD5, 0},
-		{0xd0, 0xa4, 0xD4, 0},
-		{0xd0, 0xab, 0xDB, 0},
-		{0xd0, 0x92, 0xC2, 0},
-		{0xd0, 0x90, 0xC0, 0},
-		{0xd0, 0x9f, 0xCF, 0},
-		{0xd0, 0xa0, 0xD0, 0},
-		{0xd0, 0x9e, 0xCE, 0},
-		{0xd0, 0x9b, 0xCB, 0},
-		{0xd0, 0x94, 0xC4, 0},
-		{0xd0, 0x96, 0xC6, 0},
-		{0xd0, 0xad, 0xDD, 0},
-		{0xd0, 0xaf, 0xDF, 0},
-		{0xd0, 0xa7, 0xD7, 0},
-		{0xd0, 0xa1, 0xD1, 0},
-		{0xd0, 0x9c, 0xCC, 0},
-		{0xd0, 0x98, 0xC8, 0},
-		{0xd0, 0xa2, 0xD2, 0},
-		{0xd0, 0xac, 0xDC, 0},
-		{0xd0, 0x91, 0xC1, 0},
-		{0xd0, 0xae, 0xDE, 0},
-
-		{0xd0, 0xaa, 0xda, 0}, // big "b
-		{0xd1, 0x8a, 0xfa, 0}, // small "b
-		{0xd0, 0x81, 0xa8, 0}, // big :E
-		{0xd1, 0x91, 0xb8, 0}, // small :e
-
-		{0xe2, 0x84, 0x96, 0xb9}} // N
-
-	TABLE_FOR_CONVERT_SUDA := [][]byte{
-		// small
-		{0xd0, 0xb9, 0xA9, 0},
-		{0xd1, 0x86, 0xE6, 0},
-		{0xd1, 0x83, 0xE3, 0},
-		{0xd0, 0xba, 0xAA, 0},
-		{0xd0, 0xb5, 0xA5, 0},
-		{0xd0, 0xbd, 0xAD, 0},
-		{0xd0, 0xb3, 0xA3, 0},
-		{0xd1, 0x88, 0xE8, 0},
-		{0xd1, 0x89, 0xE9, 0},
-		{0xd0, 0xb7, 0xA7, 0},
-		{0xd1, 0x85, 0xE5, 0},
-		{0xd1, 0x84, 0xE4, 0},
-		{0xd1, 0x8b, 0xEB, 0},
-		{0xd0, 0xb2, 0xA2, 0},
-		{0xd0, 0xb0, 0xA0, 0},
-		{0xd0, 0xbf, 0xAF, 0},
-		{0xd1, 0x80, 0xE0, 0},
-		{0xd0, 0xbe, 0xAE, 0},
-		{0xd0, 0xbb, 0xAB, 0},
-		{0xd0, 0xb4, 0xA4, 0},
-		{0xd0, 0xb6, 0xA6, 0},
-		{0xd1, 0x8d, 0xED, 0},
-		{0xd1, 0x8f, 0xEF, 0},
-		{0xd1, 0x87, 0xE7, 0},
-		{0xd1, 0x81, 0xE1, 0},
-		{0xd0, 0xbc, 0xAC, 0},
-		{0xd0, 0xb8, 0xA8, 0},
-		{0xd1, 0x82, 0xE2, 0},
-		{0xd1, 0x8c, 0xEC, 0},
-		{0xd0, 0xb1, 0xA1, 0},
-		{0xd1, 0x8e, 0xEE, 0},
-		// big
-		{0xd0, 0x99, 0x89, 0},
-		{0xd0, 0xa6, 0x96, 0},
-		{0xd0, 0xa3, 0x93, 0},
-		{0xd0, 0x9a, 0x8A, 0},
-		{0xd0, 0x95, 0x85, 0},
-		{0xd0, 0x9d, 0x8D, 0},
-		{0xd0, 0x93, 0x83, 0},
-		{0xd0, 0xa8, 0x98, 0},
-		{0xd0, 0xa9, 0x99, 0},
-		{0xd0, 0x97, 0x87, 0},
-		{0xd0, 0xa5, 0x95, 0},
-		{0xd0, 0xa4, 0x94, 0},
-		{0xd0, 0xab, 0x9B, 0},
-		{0xd0, 0x92, 0x82, 0},
-		{0xd0, 0x90, 0x80, 0},
-		{0xd0, 0x9f, 0x8F, 0},
-		{0xd0, 0xa0, 0x90, 0},
-		{0xd0, 0x9e, 0x8E, 0},
-		{0xd0, 0x9b, 0x8B, 0},
-		{0xd0, 0x94, 0x84, 0},
-		{0xd0, 0x96, 0x86, 0},
-		{0xd0, 0xad, 0x9D, 0},
-		{0xd0, 0xaf, 0x9F, 0},
-		{0xd0, 0xa7, 0x97, 0},
-		{0xd0, 0xa1, 0x91, 0},
-		{0xd0, 0x9c, 0x8C, 0},
-		{0xd0, 0x98, 0x88, 0},
-		{0xd0, 0xa2, 0x92, 0},
-		{0xd0, 0xac, 0x9C, 0},
-		{0xd0, 0x91, 0x81, 0},
-		{0xd0, 0xae, 0x9E, 0},
-
-		{0xd0, 0xaa, 0xda, 0}, // big "b
-		{0xd1, 0x8a, 0xfa, 0}, // small "b
-		{0xd0, 0x81, 0xa8, 0}, // big :E
-		{0xd1, 0x91, 0xb8, 0}, // small :e
-
-		{0xe2, 0x84, 0x96, 0xfc}} // N
-
-	var in_len = len(in_string)
-	var i int
-	var b byte
-
-	if tuda_suda {
-		for i < in_len {
-			if '\xd0' == in_string[i] || '\xd1' == in_string[i] {
-				var is_found = false
-				var q uint
-
-				for q < ALL_SYMBOLS_FOR_CONVERT-1 {
-					if TABLE_FOR_CONVERT_TUDA[q][0] == in_string[i] && TABLE_FOR_CONVERT_TUDA[q][1] == in_string[i+1] {
-						b = TABLE_FOR_CONVERT_TUDA[q][2]
-						*out_string = append(*out_string, b)
-						is_found = true
-						break
-					}
-
-					q++
-				}
-
-				if is_found {
-					i++
-				}
-			} else if '\xe2' == in_string[i] {
-				var is_found = false
-				var q = ALL_SYMBOLS_FOR_CONVERT - 1
-
-				for q < ALL_SYMBOLS_FOR_CONVERT {
-					if TABLE_FOR_CONVERT_TUDA[q][0] == in_string[i] && TABLE_FOR_CONVERT_TUDA[q][1] == in_string[i+1] && TABLE_FOR_CONVERT_TUDA[q][2] == in_string[i+2] {
-						b = TABLE_FOR_CONVERT_TUDA[q][3]
-						*out_string = append(*out_string, b)
-						is_found = true
-						break
-					}
-
-					q++
-				}
-
-				if is_found {
-					i += 2
-				}
-			} else {
-				*out_string = append(*out_string, byte(in_string[i]))
-			}
-
-			i++
-		}
-	} else {
-		for i < in_len {
-			var is_found = false
-			var q uint
-
-			for q < ALL_SYMBOLS_FOR_CONVERT-1 {
-				if TABLE_FOR_CONVERT_SUDA[q][2] == in_string[i] {
-					b = TABLE_FOR_CONVERT_SUDA[q][0]
-					*out_string = append(*out_string, b)
-					b = TABLE_FOR_CONVERT_SUDA[q][1]
-					*out_string = append(*out_string, b)
-					is_found = true
-					break
-				}
-				q++
-			}
-
-			if !is_found {
-				var is_found2 = false
-				var q = ALL_SYMBOLS_FOR_CONVERT - 1
-
-				for q < ALL_SYMBOLS_FOR_CONVERT {
-					if TABLE_FOR_CONVERT_SUDA[q][3] == in_string[i] {
-						b = TABLE_FOR_CONVERT_SUDA[q][0]
-						*out_string = append(*out_string, b)
-						b = TABLE_FOR_CONVERT_SUDA[q][1]
-						*out_string = append(*out_string, b)
-						b = TABLE_FOR_CONVERT_SUDA[q][2]
-						*out_string = append(*out_string, b)
-						is_found2 = true
-						break
-					}
-					q++
-				}
-
-				if !is_found2 {
-					*out_string = append(*out_string, byte(in_string[i]))
-				}
-			}
-
-			i++
-		}
-	}
-
-	if is_debug() {
-		if len(in_string) != len(*out_string) {
-			var tmp []string
-			for _, x := range []byte(in_string) {
-				tmp = append(tmp, fmt.Sprintf("0x%02x, ", x))
-			}
-			log.Println(tmp)
-
-			var tmp2 []string
-			for _, x := range []byte(*out_string) {
-				tmp2 = append(tmp2, fmt.Sprintf("0x%02x, ", x))
-			}
-			log.Println(tmp2)
-		}
-	}
 }
